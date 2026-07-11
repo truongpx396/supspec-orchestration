@@ -12,28 +12,40 @@ The skills share one contract: **plan upstream, implement under discipline, prov
 
 This repo contains the **implementation half** of a two-phase pipeline. The full end-to-end flow starts with **SpecKit** (the spec/planning superpower suite) and finishes with these orchestration skills.
 
-```
-┌───────────────────────── SpecKit — Spec & Planning ──────────────────────────┐
-│                                                                              │
-│  speckit.specify  -->  speckit.clarify  -->  speckit.plan                    │
-│  (feature spec)        (Q&A gaps)            (architecture + design)         │
-│                                                                              │
-│  speckit.tasks  -->  speckit.analyze  -->  speckit.checklist                 │
-│  (tasks.md gen)        (cross-artifact QA)   (feature checklist)             │
-│                                                                              │
-└──────────────────────────────────────────────────────────────────────────────┘
-                              ↓  tasks.md ready
-┌─────────────────── supspec-orchestration — Implementation ───────────────────┐
-│                                                                              │
-│  single-branch-development   or   executing-parallel-tracks                  │
-│  (one branch, one track)          (N tracks, N worktrees)                    │
-│                                      ↓                                       │
-│  pr-review-feedback  <--  human review  <--  draft PR                        │
-│                                                                              │
-└──────────────────────────────────────────────────────────────────────────────┘
-```
+```mermaid
+flowchart TD
+    subgraph SK["SpecKit — Spec & Planning"]
+        direction LR
+        A["💬 speckit.specify
+(feature spec)"]
+        B["🔍 speckit.clarify
+(Q&A gaps)"]
+        C["📐 speckit.plan
+(architecture + design)"]
+        D["📋 speckit.tasks
+(tasks.md gen)"]
+        E["🔎 speckit.analyze
+(cross-artifact QA)"]
+        F["✅ speckit.checklist
+(feature checklist)"]
+        A --> B --> C
+        D --> E --> F
+    end
 
-> 💬 `speckit.specify` · 🔍 `speckit.clarify` · 📐 `speckit.plan` · 📋 `speckit.tasks` · 🔎 `speckit.analyze` · ✅ `speckit.checklist` · 🌿 `single-branch-development` · 🪢 `executing-parallel-tracks` · 🔁 `pr-review-feedback`
+    SK -->|"tasks.md ready"| IMPL
+
+    subgraph IMPL["supspec-orchestration — Implementation"]
+        direction LR
+        G["🌿 single-branch-development
+(one branch, one track)"]
+        H["🪢 executing-parallel-tracks
+(N tracks, N worktrees)"]
+        I["🔁 pr-review-feedback"]
+        G & H -->|"draft PR"| REV["👤 human review"]
+        REV -->|"changes needed"| I
+        REV -->|"approved"| MERGE["✅ merge"]
+    end
+```
 
 > **SpecKit** is not in this repo but is the expected upstream. When tasks.md is ready, hand off here.
 
