@@ -119,9 +119,10 @@ single-branch-development (refactor mode)
 speckit.tasks  (produces N tracks in track-manifest.md)
        ↓
 executing-parallel-tracks
-  │  Step 1: track-precheck.sh                     🔎 validate manifest
-  │  Step 2: dispatching-parallel-agents           🪢 fan out N agents
-  │  Each agent runs single-branch-development     🌿 isolated worktree
+  │  Step 1: track-precheck.sh                     🔎 validate manifest + ownership overlap
+  │  Step 2: using-git-worktrees (×N)              🌿 one isolated worktree per track
+  │  Step 3: dispatching-parallel-agents           🪢 fan out N worker agents
+  │  Each agent runs single-branch-development     🔄 full pipeline per track
   │    └─ all 8 steps above, per track
   │  Step N+1: observe run records, triage failures 📊 track per RUN_ID
   │  Step N+2: integration sequencing (dependency order) 🔀 PRs ordered
@@ -158,7 +159,7 @@ Superpowers used: `using-git-worktrees` (per track) → `dispatching-parallel-ag
 ### 🔁 pr-review-feedback
 Turns a batch of PR review comments into applied, evidenced changes on the **existing** PR branch — no preflight-mint, no fresh RED, no new isolate. Reuses the hooks bundle in **resume mode** and closes with a PR update.
 
-Superpowers used: `receiving-code-review` (triage) → `verification-before-completion` (re-gate) → hooks resume.
+Superpowers used: `receiving-code-review` (triage) → 🤖 `dispatching-parallel-agents` (optional, independent fixes) → `requesting-code-review` (re-review fix delta) → `verification-before-completion` (re-evidence).
 
 ---
 
