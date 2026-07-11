@@ -48,12 +48,13 @@ single-branch-development (story mode, N=1)
   │  Step 0: install-hooks.sh --apply              🔧 hooks bundle
   │  Step 1: track-preflight.sh --commit           🎫 mint RUN_ID
   │  Step 2: using-git-worktrees                   🌿 isolate branch
-  │  Step 3: test-driven-development (RED phase)   🔴 write failing tests
-  │  Step 4: subagent-driven-development (GREEN)   🟢 implement + pass tests
-  │  Step 5: verification-before-completion        ✅ evidence captured
+  │  Step 3: dispatching-parallel-agents (🤖 maker subagents) 🔴 author failing tests (RED batch)
+  │  Step 3b: requesting-code-review               📬 review + freeze RED suite
+  │  Step 4: subagent-driven-development           🟢 implement (🤖 maker+reviewer subagents per task)
+  │    └─ wraps: test-driven-development + requesting-code-review internally
+  │  Step 5: verification-before-completion        ✅ freeze + evidence captured
   │  Step 6: track-sentinel.sh                     🔒 secrets/debug scan
-  │  Step 7: requesting-code-review                📬 self-review pass
-  │  Step 8: track-report.sh → gh pr create --draft  📄 draft PR handoff
+  │  Step 7: track-report.sh → gh pr create --draft  📄 draft PR handoff
        ↓
 human reviews → pr-review-feedback (if changes needed)
   │  receiving-code-review                         🧐 triage comments
@@ -87,9 +88,9 @@ speckit.tasks (bootstrap tasks, no RED/GREEN cycle)
 single-branch-development (scaffold mode)
   │  Step 0-1: same hooks + preflight              🔧 🎫
   │  Step 2: using-git-worktrees                   🌿 isolate branch
-  │  Step 3: dispatching-parallel-agents           🪢 read-only subagents
-  │    └─ fan out scaffold batches (config, wiring, structure)
-  │  Step 4: verification-before-completion        ✅ compile/lint gate
+  │  Step 3: dispatching-parallel-agents (🤖 maker subagents) 🪢 fan out scaffold batches (config, wiring, structure)
+  │  Step 3b: requesting-code-review               📬 review whole diff (quality + governance)
+  │  Step 4: verification-before-completion        ✅ compile/lint/bring-up health check
   │  Step 5-8: sentinel → report → draft PR        🔒 📄
 ```
 
@@ -98,10 +99,12 @@ single-branch-development (scaffold mode)
 ```
 single-branch-development (refactor mode)
   │  Step 2: using-git-worktrees                   🌿 isolate
-  │  Step 3: subagent-driven-development           🟢 keep-green (no new RED)
-  │    └─ systematic-debugging if a test breaks    🐛
-  │  Step 4: verification-before-completion        ✅ all-green required
-  │  Step 5-8: sentinel → report → draft PR        🔒 📄
+  │  Step 3: dispatching-parallel-agents (🤖 maker subagents) 📌 pin-green + add characterization tests
+  │  Step 3b: requesting-code-review               📬 review pin-green suite (must pass immediately)
+  │  Step 4: subagent-driven-development           🟢 transform incrementally, keep-green (🤖 maker+reviewer subagents)
+  │    └─ systematic-debugging if a test goes red  🐛
+  │  Step 5: verification-before-completion        ✅ full suite all-green required
+  │  Step 6-8: sentinel → report → draft PR        🔒 📄
 ```
 
 ---
@@ -119,9 +122,9 @@ A thin **per-branch bracket** (isolation before, evidence gate + draft-PR bounda
 
 | Mode | What it does | Key superpower used |
 |---|---|---|
-| **scaffold** | Non-behavioral bootstrap batches (config, wiring, structure) | `dispatching-parallel-agents` |
-| **story** | Add or change behavior under phased TDD | `test-driven-development` → `subagent-driven-development` |
-| **refactor** | Behavior-preserving keep-green change | `subagent-driven-development` + `systematic-debugging` |
+| **scaffold** | Non-behavioral bootstrap batches (config, wiring, structure) | 🤖 `dispatching-parallel-agents` → `requesting-code-review` |
+| **story** | Add or change behavior under phased TDD | 🤖 `dispatching-parallel-agents` (RED batch) → `requesting-code-review` (freeze) → 🤖 `subagent-driven-development` (GREEN) |
+| **refactor** | Behavior-preserving keep-green change | 🤖 `dispatching-parallel-agents` (pin-green) → `requesting-code-review` → 🤖 `subagent-driven-development` + `systematic-debugging` |
 
 All modes share: `using-git-worktrees` (isolation), `verification-before-completion` (evidence gate), `requesting-code-review` (self-review), and the full hooks bundle.
 
