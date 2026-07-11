@@ -194,6 +194,13 @@ Everything a run records lands in `runs/<RUN_ID>.json` (gitignored). Full docume
     track-*.sh
     track-hooks.json                  # event -> script wiring
     track-env.base.sh                 # committed repo-wide config defaults
+  instructions/                       # governance gate — applied by every review step
+    security-and-owasp.instructions.md  # always applied at trust boundaries
+    go.instructions.md                  # applied to **/*.go changes
+    python.instructions.md              # applied to **/*.py changes
+    reactjs.instructions.md             # applied to **/*.tsx/**/*.ts changes
+    state-management.instructions.md    # applied to **/*.tsx/**/*.ts changes
+    code-review-generic.instructions.md # applied to all changes
   skills/
     single-branch-development/
       SKILL.md
@@ -303,6 +310,22 @@ bash .github/skills/executing-parallel-tracks/tests/test-skill.sh
 | 🧵 **Independently traceable** | One `RUN_ID` threads branch ↔ PR ↔ commit trailer ↔ run record |
 | ♻️ **Self-recovering** | State lives in committed history + `runs/<RUN_ID>.json`, not model memory |
 | 🔩 **Mechanical where possible** | Hooks enforce paths/commands/counters; judgement gates stay as instructions |
+
+---
+
+## 🔗 Key files
+
+| File | Purpose |
+|---|---|
+| [`.github/skills/single-branch-development/SKILL.md`](https://github.com/truongpx396/supspec-orchestration/blob/main/.github/skills/single-branch-development/SKILL.md) | Per-branch worker — full pipeline spec, skill-per-step map, all three modes |
+| [`.github/skills/executing-parallel-tracks/SKILL.md`](https://github.com/truongpx396/supspec-orchestration/blob/main/.github/skills/executing-parallel-tracks/SKILL.md) | Parallel-tracks conductor — fan-out, isolation, integration sequencing |
+| [`.github/skills/pr-review-feedback/SKILL.md`](https://github.com/truongpx396/supspec-orchestration/blob/main/.github/skills/pr-review-feedback/SKILL.md) | PR rework stage — triage, fix, re-evidence, PR update |
+| [`.github/skills/single-branch-development/references/hooks.md`](https://github.com/truongpx396/supspec-orchestration/blob/main/.github/skills/single-branch-development/references/hooks.md) | Hooks bundle reference — every script, every env var, run-record schema |
+| [`.github/skills/single-branch-development/templates/track-manifest.template.md`](https://github.com/truongpx396/supspec-orchestration/blob/main/.github/skills/executing-parallel-tracks/track-manifest.template.md) | Track manifest template — copy into your repo, fill in task/ownership facts |
+| [`.github/instructions/security-and-owasp.instructions.md`](https://github.com/truongpx396/supspec-orchestration/blob/main/.github/instructions/security-and-owasp.instructions.md) | Security governance — applied at every trust-boundary review |
+| [`.github/instructions/code-review-generic.instructions.md`](https://github.com/truongpx396/supspec-orchestration/blob/main/.github/instructions/code-review-generic.instructions.md) | Generic review rubric — applied to all reviews |
+| [`.github/hooks/track-env.base.sh`](https://github.com/truongpx396/supspec-orchestration/blob/main/.github/hooks/track-env.base.sh) | Committed repo-wide config — all env vars with defaults and comments |
+| [`.github/hooks/track-hooks.json`](https://github.com/truongpx396/supspec-orchestration/blob/main/.github/hooks/track-hooks.json) | Hook wiring — event → script mapping |
 
 ---
 
