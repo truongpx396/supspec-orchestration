@@ -1,7 +1,7 @@
 # supspec-orchestration 🤖
 
 > **Autonomous agent workflows that turn a SpecKit spec into 1 or N evidenced draft PRs —**
-> **gated by mechanical hooks, composed from Copilot superpowers. No self-merge. Ever.**
+> **gated by mechanical hooks, composed from Superpowers. No self-merge. Ever.**
 
 Feed it a spec and a task list. It runs autonomous Copilot agents — scaffold, story, refactor, or
 all three in parallel — and stops at a reviewed, fingerprint-evidenced **draft PR** waiting for a
@@ -10,7 +10,7 @@ secrets scan so every agent run is observable, resumable, and safe to hand to a 
 haven't met.
 
 Built on **[SpecKit](https://github.com/github/spec-kit)** (spec → plan → tasks upstream) +
-the **[Copilot Superpowers](https://github.com/obra/superpowers)** catalog (skills + dispatched subagents downstream).
+the **[Superpowers](https://github.com/obra/superpowers)** catalog (skills + dispatched subagents downstream).
 
 ---
 
@@ -54,7 +54,7 @@ flowchart TD
 ```
 
 > **[SpecKit](https://github.com/github/spec-kit)** is not in this repo but is the expected upstream. When `tasks.md` is ready, hand off here.
-> **[Copilot Superpowers](https://github.com/obra/superpowers)** provides the skill + subagent catalog used throughout.
+> **[Superpowers](https://github.com/obra/superpowers)** provides the skill + subagent catalog used throughout.
 
 ---
 
@@ -241,15 +241,38 @@ Optionally add a gitignored `.github/hooks/track-env.sh` per worktree for overri
 
 Precedence: `exported env` > `worktree track-env.sh` > `repo track-env.base.sh` > `script default`
 
-Key env vars:
+Key env vars (set in `track-env.base.sh` unless noted):
+
+**Scope & guard**
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `TRACK_ALLOWED_PREFIXES` | *(required)* | Colon-separated path prefixes the worker may edit |
-| `TRACK_MAX_TOOL_CALLS` | `200` | Hard ceiling on tool calls per run |
-| `TRACK_TOKEN_ESTIMATE` | `1` | Enable transcript-based token estimate at Stop |
-| `TRACK_SENTINEL` | `1` | Enable secrets/debug scan at Stop |
-| `RUN_ID` | minted by preflight | Stable identifier threading branch ↔ PR ↔ run record |
+| `TRACK_ALLOWED_PREFIXES` | *(required — empty = deny all edits)* | Colon-separated path prefixes the worker may write |
+| `TRACK_FROZEN_PATHS` | `""` | Space-separated exact files no worker may edit |
+| `TRACK_IMMUTABLE_PREFIXES` | `migrations/` | Committed files here are append-only |
+| `TRACK_GUARD_DESTRUCTIVE` | `1` | Deny irreversible shell/DB ops (rm -rf, data-wipe commands) |
+| `TRACK_ALLOW_FF_PUSH` | `""` | Set to `1` only for `pr-review-feedback` (update existing PR branch) |
+
+**Evidence & quality**
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `TRACK_EVIDENCE_KINDS` | `go-test:…;py:…;ts:…` | `label:command` pack — what commands produce evidence |
+| `TRACK_EVIDENCE_RULES` | path-glob:kind pairs | Auto-require evidence kinds based on which files changed |
+| `TRACK_REQUIRED_EVIDENCE` | `""` *(task-derived)* | Extra kinds required on every diff regardless of rules |
+| `TRACK_BASE_REF` | `origin/main` | Base ref for the diff — wrong value silently passes an empty diff |
+
+**Run lifecycle**
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `RUN_ID` | minted by preflight | Stable identifier threading branch ↔ PR ↔ commit trailer ↔ run record |
+| `RUNS_DIR` | `runs` | Directory for run records — must be gitignored |
+| `TRACK_MAX_TOOL_CALLS` | `200` | Hard ceiling on tool calls; run halts when reached |
+| `TRACK_TOKEN_ESTIMATE` | `1` | Estimate token usage at Stop (transcript chars÷4 heuristic) |
+| `TRACK_SENTINEL` | `1` | Scan staged diff for likely secrets/debug leftovers at Stop |
+| `TRACK_NOTIFY_WEBHOOK` | `""` | URL for best-effort completion webhook; empty = no notify |
+| `PREFLIGHT_REQUIRE_GH` | `1` | Require authenticated `gh` CLI at preflight (set `0` on bootstraps without a remote) |
 
 ### 3️⃣ Invoke a skill
 Point Copilot at the task and let the skill drive:
@@ -285,4 +308,4 @@ bash .github/skills/executing-parallel-tracks/tests/test-skill.sh
 
 ## License
 
-See repository settings. These skills are provided as-is for orchestrating Copilot agent workflows.
+MIT — see [LICENSE](LICENSE). These skills are provided as-is for orchestrating Copilot agent workflows.
