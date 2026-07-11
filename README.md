@@ -9,10 +9,8 @@ human. The mechanical hooks bundle enforces scope, evidence freshness, token cei
 secrets scan so every agent run is observable, resumable, and safe to hand to a reviewer you
 haven't met.
 
-Built on **[SpecKit](https://github.com/truongpx396/supspec-orchestration#-where-these-skills-fit-in-the-full-pipeline)**
-(spec → plan → tasks upstream) + the
-**[Copilot Superpowers](https://github.com/truongpx396/supspec-orchestration#-the-three-skills)**
-catalog (skills + dispatched subagents downstream).
+Built on **[SpecKit](https://github.com/github/spec-kit)** (spec → plan → tasks upstream) +
+the **[Copilot Superpowers](https://github.com/obra/superpowers)** catalog (skills + dispatched subagents downstream).
 
 ---
 
@@ -55,7 +53,8 @@ flowchart TD
     end
 ```
 
-> **SpecKit** is not in this repo but is the expected upstream. When tasks.md is ready, hand off here.
+> **[SpecKit](https://github.com/github/spec-kit)** is not in this repo but is the expected upstream. When `tasks.md` is ready, hand off here.
+> **[Copilot Superpowers](https://github.com/obra/superpowers)** provides the skill + subagent catalog used throughout.
 
 ---
 
