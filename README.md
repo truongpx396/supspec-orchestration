@@ -53,7 +53,21 @@ flowchart TD
 
 ## 🔄 Main flows
 
-### Flow 1 — Single feature or bugfix
+### Flow 1 — Scaffold / foundation setup
+
+```
+speckit.tasks (bootstrap tasks, no RED/GREEN cycle)
+       ↓
+single-branch-development (scaffold mode)
+  │  Step 0-1: same hooks + preflight              🔧 🎫
+  │  Step 2: using-git-worktrees                   🌿 isolate branch
+  │  Step 3: dispatching-parallel-agents (🤖 maker subagents) 🪢 fan out scaffold batches (config, wiring, structure)
+  │  Step 3b: requesting-code-review               📬 review whole diff (quality + governance)
+  │  Step 4: verification-before-completion        ✅ compile/lint/bring-up health check
+  │  Step 5-8: sentinel → report → draft PR        🔒 📄
+```
+
+### Flow 2 — Single feature or bugfix
 
 ```
 speckit.specify → speckit.clarify → speckit.plan → speckit.tasks
@@ -78,7 +92,20 @@ human reviews → pr-review-feedback (if changes needed)
 human merges ✅
 ```
 
-### Flow 2 — Parallel tracks (multiple stories at once)
+### Flow 3 — Behavior-preserving refactor
+
+```
+single-branch-development (refactor mode)
+  │  Step 2: using-git-worktrees                   🌿 isolate
+  │  Step 3: dispatching-parallel-agents (🤖 maker subagents) 📌 pin-green + add characterization tests
+  │  Step 3b: requesting-code-review               📬 review pin-green suite (must pass immediately)
+  │  Step 4: subagent-driven-development           🟢 transform incrementally, keep-green (🤖 maker+reviewer subagents)
+  │    └─ systematic-debugging if a test goes red  🐛
+  │  Step 5: verification-before-completion        ✅ full suite all-green required
+  │  Step 6-8: sentinel → report → draft PR        🔒 📄
+```
+
+### Flow 4 — Parallel tracks (multiple stories at once)
 
 ```
 speckit.tasks  (produces N tracks in track-manifest.md)
@@ -92,33 +119,6 @@ executing-parallel-tracks
   │  Step N+2: integration sequencing (dependency order) 🔀 PRs ordered
        ↓
 human reviews N draft PRs → merge queue
-```
-
-### Flow 3 — Scaffold / foundation setup
-
-```
-speckit.tasks (bootstrap tasks, no RED/GREEN cycle)
-       ↓
-single-branch-development (scaffold mode)
-  │  Step 0-1: same hooks + preflight              🔧 🎫
-  │  Step 2: using-git-worktrees                   🌿 isolate branch
-  │  Step 3: dispatching-parallel-agents (🤖 maker subagents) 🪢 fan out scaffold batches (config, wiring, structure)
-  │  Step 3b: requesting-code-review               📬 review whole diff (quality + governance)
-  │  Step 4: verification-before-completion        ✅ compile/lint/bring-up health check
-  │  Step 5-8: sentinel → report → draft PR        🔒 📄
-```
-
-### Flow 4 — Behavior-preserving refactor
-
-```
-single-branch-development (refactor mode)
-  │  Step 2: using-git-worktrees                   🌿 isolate
-  │  Step 3: dispatching-parallel-agents (🤖 maker subagents) 📌 pin-green + add characterization tests
-  │  Step 3b: requesting-code-review               📬 review pin-green suite (must pass immediately)
-  │  Step 4: subagent-driven-development           🟢 transform incrementally, keep-green (🤖 maker+reviewer subagents)
-  │    └─ systematic-debugging if a test goes red  🐛
-  │  Step 5: verification-before-completion        ✅ full suite all-green required
-  │  Step 6-8: sentinel → report → draft PR        🔒 📄
 ```
 
 ---
@@ -246,9 +246,10 @@ Key env vars:
 ### 3️⃣ Invoke a skill
 Point Copilot at the task and let the skill drive:
 
-- *"implement this story using single-branch-development"* → Flow 1
-- *"run tracks 1, 2, 3 in parallel using executing-parallel-tracks"* → Flow 2
-- *"address the PR review comments using pr-review-feedback"* → Flow 4
+- *"bootstrap a new project foundation"* → Flow 1
+- *"implement this story using single-branch-development"* → Flow 2
+- *"refactor this module using single-branch-development"* → Flow 3
+- *"run tracks 1, 2, 3 in parallel using executing-parallel-tracks"* → Flow 4
 
 The worker stops at `gh pr create --draft`. **A human owns the merge.**
 
