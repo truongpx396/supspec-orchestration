@@ -1,10 +1,18 @@
-# supspec-orchestration 🚀
+# supspec-orchestration 🤖
 
-**Spec-driven implementation orchestration for GitHub Copilot agents.**
+> **Autonomous agent workflows that turn a SpecKit spec into 1 or N evidenced draft PRs —**
+> **gated by mechanical hooks, composed from Copilot superpowers. No self-merge. Ever.**
 
-A portable bundle of three composable [Copilot Agent Skills](https://docs.github.com/en/copilot/how-tos/provide-context/use-agent-skills) plus a mechanical hooks bundle that turns a spec + task list into reviewed, evidenced, draft-PR-ready code — on one branch or across many parallel tracks.
+Feed it a spec and a task list. It runs autonomous Copilot agents — scaffold, story, refactor, or
+all three in parallel — and stops at a reviewed, fingerprint-evidenced **draft PR** waiting for a
+human. The mechanical hooks bundle enforces scope, evidence freshness, token ceilings, and a
+secrets scan so every agent run is observable, resumable, and safe to hand to a reviewer you
+haven't met.
 
-The skills share one contract: **plan upstream, implement under discipline, prove it with machine-captured evidence, hand off at a draft PR.** No skill can merge its own work.
+Built on **[SpecKit](https://github.com/truongpx396/supspec-orchestration#-where-these-skills-fit-in-the-full-pipeline)**
+(spec → plan → tasks upstream) + the
+**[Copilot Superpowers](https://github.com/truongpx396/supspec-orchestration#-the-three-skills)**
+catalog (skills + dispatched subagents downstream).
 
 ---
 
