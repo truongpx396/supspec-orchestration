@@ -1,4 +1,4 @@
-# supspec-orchestration
+# supspec-orchestration 🚀
 
 **Spec-driven implementation orchestration for GitHub Copilot agents.**
 
@@ -8,120 +8,235 @@ The skills share one contract: **plan upstream, implement under discipline, prov
 
 ---
 
-## Why this exists
+## 🗺️ Where these skills fit in the full pipeline
 
-Autonomous agents are cheap to run and easy to *trust too much*. The recurring failure modes are always the same:
+This repo contains the **implementation half** of a two-phase pipeline. The full end-to-end flow starts with **SpecKit** (the spec/planning superpower suite) and finishes with these orchestration skills.
 
-- claims of "tests pass" with no captured proof,
-- edits that silently escape the intended scope,
-- an agent that auto-integrates its own unreviewed work,
-- parallel workers that can't be traced or reverted independently,
-- a run that dies halfway and resumes by *guessing* where it left off.
+```
+┌─────────────────────── SpecKit — Spec & Planning ──────────────────────────┐
+│                                                                             │
+│  💬 speckit.specify  →  🔍 speckit.clarify  →  📐 speckit.plan             │
+│       (feature spec)       (Q&A gaps)          (architecture + design)     │
+│                                                                             │
+│  📋 speckit.tasks  →  🔎 speckit.analyze  →  ✅ speckit.checklist          │
+│    (tasks.md gen)     (cross-artifact QA)      (feature checklist)         │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+                              ↓  tasks.md ready
+┌──────────────────── supspec-orchestration — Implementation ─────────────────┐
+│                                                                             │
+│  🌿 single-branch-development   or   🪢 executing-parallel-tracks          │
+│     (one branch, one track)              (N tracks, N worktrees)           │
+│                              ↓                                             │
+│  🔁 pr-review-feedback  ←── human review ←── draft PR                      │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
 
-This bundle answers each with a **mechanical control**, not a prompt suggestion. The judgement stays with the model; the *gates* are enforced by hooks that read tool I/O and can block a tool call, halt a run, or fail a stop.
+> **SpecKit** is not in this repo but is the expected upstream. When tasks.md is ready, hand off here.
 
 ---
 
-## The three skills
+## 🔄 Main flows
+
+### Flow 1 — Single feature or bugfix
+
+```
+speckit.specify → speckit.clarify → speckit.plan → speckit.tasks
+       ↓
+single-branch-development (story mode, N=1)
+  │  Step 0: install-hooks.sh --apply              🔧 hooks bundle
+  │  Step 1: track-preflight.sh --commit           🎫 mint RUN_ID
+  │  Step 2: using-git-worktrees                   🌿 isolate branch
+  │  Step 3: test-driven-development (RED phase)   🔴 write failing tests
+  │  Step 4: subagent-driven-development (GREEN)   🟢 implement + pass tests
+  │  Step 5: verification-before-completion        ✅ evidence captured
+  │  Step 6: track-sentinel.sh                     🔒 secrets/debug scan
+  │  Step 7: requesting-code-review                📬 self-review pass
+  │  Step 8: track-report.sh → gh pr create --draft  📄 draft PR handoff
+       ↓
+human reviews → pr-review-feedback (if changes needed)
+  │  receiving-code-review                         🧐 triage comments
+  │  implement fixes + re-run verification         🔁 hooks resume
+  │  track-report.sh → gh pr push                 📄 update PR
+       ↓
+human merges ✅
+```
+
+### Flow 2 — Parallel tracks (multiple stories at once)
+
+```
+speckit.tasks  (produces N tracks in track-manifest.md)
+       ↓
+executing-parallel-tracks
+  │  Step 1: track-precheck.sh                     🔎 validate manifest
+  │  Step 2: dispatching-parallel-agents           🪢 fan out N agents
+  │  Each agent runs single-branch-development     🌿 isolated worktree
+  │    └─ all 8 steps above, per track
+  │  Step N+1: observe run records, triage failures 📊 track per RUN_ID
+  │  Step N+2: integration sequencing (dependency order) 🔀 PRs ordered
+       ↓
+human reviews N draft PRs → merge queue
+```
+
+### Flow 3 — Scaffold / foundation setup
+
+```
+speckit.tasks (bootstrap tasks, no RED/GREEN cycle)
+       ↓
+single-branch-development (scaffold mode)
+  │  Step 0-1: same hooks + preflight              🔧 🎫
+  │  Step 2: using-git-worktrees                   🌿 isolate branch
+  │  Step 3: dispatching-parallel-agents           🪢 read-only subagents
+  │    └─ fan out scaffold batches (config, wiring, structure)
+  │  Step 4: verification-before-completion        ✅ compile/lint gate
+  │  Step 5-8: sentinel → report → draft PR        🔒 📄
+```
+
+### Flow 4 — Behavior-preserving refactor
+
+```
+single-branch-development (refactor mode)
+  │  Step 2: using-git-worktrees                   🌿 isolate
+  │  Step 3: subagent-driven-development           🟢 keep-green (no new RED)
+  │    └─ systematic-debugging if a test breaks    🐛
+  │  Step 4: verification-before-completion        ✅ all-green required
+  │  Step 5-8: sentinel → report → draft PR        🔒 📄
+```
+
+---
+
+## 🛠️ The three skills
 
 | Skill | Role | Use when |
 |---|---|---|
-| **[single-branch-development](.github/skills/single-branch-development/SKILL.md)** | The per-branch worker | Implement one feature, fix one bug, refactor existing code, or bootstrap a foundation — end to end on a single branch. |
-| **[executing-parallel-tracks](.github/skills/executing-parallel-tracks/SKILL.md)** | The conductor | Run N independent tracks concurrently, each in its own worktree, each independently traceable and revertible. |
-| **[pr-review-feedback](.github/skills/pr-review-feedback/SKILL.md)** | The rework stage | Address review comments on an **existing** PR branch — post-implementation maintenance, not a fresh build. |
+| 🌿 **[single-branch-development](.github/skills/single-branch-development/SKILL.md)** | Per-branch worker | One feature, bugfix, refactor, or scaffold — end-to-end on a single branch |
+| 🪢 **[executing-parallel-tracks](.github/skills/executing-parallel-tracks/SKILL.md)** | Conductor | N independent tracks concurrently, each in its own worktree |
+| 🔁 **[pr-review-feedback](.github/skills/pr-review-feedback/SKILL.md)** | Rework stage | Address review comments on an **existing** PR branch |
 
-### single-branch-development
-A thin **per-branch bracket** (isolation before, an evidence gate + draft-PR boundary after) around an execution core that always runs in **one of three modes**:
+### 🌿 single-branch-development
+A thin **per-branch bracket** (isolation before, evidence gate + draft-PR boundary after) around an execution core with **three modes**:
 
-- **scaffold mode** — non-behavioral bootstrap batches (config, wiring, project structure) fanned out to read-only subagents.
-- **story mode** — behavioral work that adds or changes behavior, under phased TDD. A lone feature or bugfix is story mode with N=1.
-- **refactor mode** — behavior-preserving change to existing code, keep-green (no new behavior).
+| Mode | What it does | Key superpower used |
+|---|---|---|
+| **scaffold** | Non-behavioral bootstrap batches (config, wiring, structure) | `dispatching-parallel-agents` |
+| **story** | Add or change behavior under phased TDD | `test-driven-development` → `subagent-driven-development` |
+| **refactor** | Behavior-preserving keep-green change | `subagent-driven-development` + `systematic-debugging` |
 
-It does **not** re-implement the implement/review loop — the green phase delegates to `subagent-driven-development`, and the draft-PR boundary **replaces** any merge-capable finish.
+All modes share: `using-git-worktrees` (isolation), `verification-before-completion` (evidence gate), `requesting-code-review` (self-review), and the full hooks bundle.
 
-### executing-parallel-tracks
-The **conductor**: it owns isolation, gates, traceability, and integration sequencing, and delegates each track's implement/review/verify work to `single-branch-development`. A **fan-out to isolate to verify to PR to observe** pipeline where *you are the ceiling* — parallelism is cheap, review bandwidth is the bottleneck. Project-specific facts (which tasks belong to which track, file ownership, build commands, concurrency cap) live in a per-repo `track-manifest.md`, never hardcoded in the skill.
+### 🪢 executing-parallel-tracks
+The **conductor**: owns isolation, gates, traceability, and integration sequencing; delegates each track's implement/review/verify to `single-branch-development`. Project-specific facts (task → track mapping, file ownership, build commands, concurrency cap) live in a per-repo `track-manifest.md`, never hardcoded in the skill.
 
-### pr-review-feedback
-Turns a batch of PR review comments into applied, evidenced changes on the **existing** PR branch. It starts mid-stream (no preflight-mint, no isolate, no RED authoring from scratch), **reuses the hooks bundle in resume mode**, and closes with a PR update instead of a fresh draft PR.
+Superpowers used: `using-git-worktrees` (per track) → `dispatching-parallel-agents` → `single-branch-development` (×N).
+
+### 🔁 pr-review-feedback
+Turns a batch of PR review comments into applied, evidenced changes on the **existing** PR branch — no preflight-mint, no fresh RED, no new isolate. Reuses the hooks bundle in **resume mode** and closes with a PR update.
+
+Superpowers used: `receiving-code-review` (triage) → `verification-before-completion` (re-gate) → hooks resume.
 
 ---
 
-## The hooks bundle
+## ⚙️ The hooks bundle
 
-The skills are only as strong as the worker's compliance — unless the gates are **mechanical**. Copilot [agent hooks](https://docs.github.com/en/copilot/concepts/agents/hooks) run shell commands at lifecycle points (`PreToolUse`, `PostToolUse`, `SubagentStart/Stop`, `Stop`, …) and can block a tool call before it happens. Each script is **opt-in and no-ops unless its env is set**, so dropping the bundle in is safe before configuring anything.
+The skills are only as strong as the worker's compliance — unless the gates are **mechanical**. Copilot [agent hooks](https://docs.github.com/en/copilot/concepts/agents/hooks) run shell commands at lifecycle points (`PreToolUse`, `PostToolUse`, `SubagentStart/Stop`, `Stop`, …) and can block a tool call before it happens. Each script **no-ops unless its env is set**, so dropping the bundle in is safe before configuring anything.
 
-| Script | Event | What it enforces / records |
+| Script | 🔗 Event | What it enforces / records |
 |---|---|---|
-| `track-preflight.sh` | manual (skill Step 1) | Start gate: mint or recover a stable `RUN_ID`, check prerequisites, persist a resume breadcrumb. |
-| `track-guard.sh` | `PreToolUse` | Deny edits outside the writable scope, to frozen entrypoints, to generated/applied artifacts, or destructive terminal ops (push, integrate, `--force`, hard resets, opt-in DROP/rm -rf). |
-| `track-evidence.sh` | `PostToolUse` | Capture recorded test output (with a code fingerprint) — evidence the tool saw, not a model claim. |
-| `track-evidence-gate.sh` | `Stop` | Block stop unless every required evidence kind is present, **fresh** (fingerprint matches the current tree), and passing. |
-| `track-meter.sh` | `PostToolUse` | Count tool calls + heartbeat; hard-stop at `TRACK_MAX_TOOL_CALLS`. |
-| `track-trace.sh` | `SubagentStart/Stop` | Append a subagent timeline, capturing **why** each was spawned (`agent_description`) + stop reason. |
-| `track-tokens.sh` | `Stop` | Estimate token usage from the transcript (chars÷4 heuristic; clearly labelled — undercounts hidden prompt + cached tokens). |
-| `track-note.sh` | manual | Let the skill self-report ordered skill activations + loop counts (provenance-tagged as model claims). |
-| `track-sentinel.sh` | `Stop` | Scan the staged diff for likely secrets / debug leftovers before handoff. |
-| `track-notify.sh` | `Stop` | Best-effort completion webhook. |
-| `track-reconcile.sh` | `SessionStart` | Read-only resume: recover state from committed history + run record, stash untrusted work. |
-| `track-report.sh` | manual (skill Step 8) | Render a deterministic PR-body Auto block from machine state only (diff, evidence, tool calls, trace, token estimate). |
-| `install-hooks.sh` | manual | Idempotent, consent-gated, drift-aware installer for the whole bundle. |
+| `track-preflight.sh` | manual (Step 1) | 🎫 Mint or recover stable `RUN_ID`; check prerequisites; persist resume breadcrumb |
+| `track-guard.sh` | `PreToolUse` | 🛡️ Deny edits outside writable scope, frozen paths, artifacts, or destructive ops |
+| `track-evidence.sh` | `PostToolUse` | 📸 Capture test output + code fingerprint — what the tool saw, not a model claim |
+| `track-evidence-gate.sh` | `Stop` | 🚦 Block stop unless evidence is present, **fresh** (fingerprint matches tree), and passing |
+| `track-meter.sh` | `PostToolUse` | 🔢 Count tool calls + heartbeat; hard-stop at `TRACK_MAX_TOOL_CALLS` |
+| `track-trace.sh` | `SubagentStart/Stop` | 🔍 Record **why** each subagent was spawned (`agent_description`) + stop reason |
+| `track-tokens.sh` | `Stop` | 🪙 Estimate token usage from transcript (chars÷4; clearly labelled as estimate) |
+| `track-note.sh` | manual | 📝 Self-report ordered skill activations + loop counts (model-claim provenance tag) |
+| `track-sentinel.sh` | `Stop` | 🔒 Scan staged diff for likely secrets / debug leftovers before handoff |
+| `track-notify.sh` | `Stop` | 📣 Best-effort completion webhook |
+| `track-reconcile.sh` | `SessionStart` | ♻️ Recover state from committed history + run record; stash untrusted work |
+| `track-report.sh` | manual (Step 8) | 📄 Render deterministic PR-body Auto block (diff, evidence, tool calls, trace) |
+| `install-hooks.sh` | manual | 📦 Idempotent, consent-gated, drift-aware installer for the whole bundle |
 
 Everything a run records lands in `runs/<RUN_ID>.json` (gitignored). Full documentation: **[references/hooks.md](.github/skills/single-branch-development/references/hooks.md)**.
 
 ---
 
-## Repository layout
+## 📂 Repository layout
 
 ```
 .github/
-  hooks/                         # installed bundle (travels with each worktree)
+  hooks/                              # installed bundle (travels with each worktree)
     track-*.sh
-    track-hooks.json             # event -> script wiring
-    track-env.base.sh            # committed repo-wide config (RUN_ID minted per run, not here)
+    track-hooks.json                  # event -> script wiring
+    track-env.base.sh                 # committed repo-wide config defaults
   skills/
     single-branch-development/
       SKILL.md
-      references/                # hooks.md, scaffold-mode.md, story-mode.md, refactor-mode.md
-      scripts/                   # source of truth for track-*.sh + install-hooks.sh
-      templates/                 # track-hooks.json, track-env.sh.example, pr-body.md
-      tests/                     # test-skill.sh (self-test harness)
+      references/                     # hooks.md, scaffold/story/refactor-mode.md
+      scripts/                        # canonical source for track-*.sh + install-hooks.sh
+      templates/                      # track-hooks.json, track-env.sh.example, pr-body.md
+      tests/                          # test-skill.sh self-test harness
     executing-parallel-tracks/
       SKILL.md
-      scripts/                   # track-precheck.sh
+      scripts/                        # track-precheck.sh
       tests/
-      track-manifest.template.md # copy per repo, fill in track/task/file-ownership facts
+      track-manifest.template.md      # copy per repo; fill in track/task/ownership facts
     pr-review-feedback/
       SKILL.md
 README.md
-.gitignore                       # runs/ and the per-worktree track-env.sh
+.gitignore                            # runs/ and per-worktree track-env.sh
 ```
 
-The canonical `track-*.sh` sources live under `single-branch-development/scripts/`; the copies in `.github/hooks/` are what actually run. `install-hooks.sh --check` detects drift between the two.
+> The canonical `track-*.sh` sources live under `single-branch-development/scripts/`; the copies in `.github/hooks/` are what actually run. `install-hooks.sh --check` detects drift.
 
 ---
 
-## Getting started
+## 🚀 Getting started
 
-### 1. Use the skills in another repo
-Copy the `.github/skills/` directories into the target repo (Copilot discovers skills under `.github/skills/**/SKILL.md`), then install the hooks:
+### 1️⃣ Copy skills into your repo
+Copilot discovers skills under `.github/skills/**/SKILL.md`. Copy the `.github/skills/` directories into the target repo, then install the hooks:
 
 ```bash
-# from the skill's scripts dir, run against your repo root
-bash .github/skills/single-branch-development/scripts/install-hooks.sh --check   # drift probe (exit 3 if stale)
-bash .github/skills/single-branch-development/scripts/install-hooks.sh           # dry-run: print the plan
-bash .github/skills/single-branch-development/scripts/install-hooks.sh --apply   # sync bundle + gitignore runs/ + seed track-env.base.sh
+# dry-run: print what would change
+bash .github/skills/single-branch-development/scripts/install-hooks.sh
+
+# probe for drift between sources and installed copies
+bash .github/skills/single-branch-development/scripts/install-hooks.sh --check
+
+# sync bundle + gitignore runs/ + seed track-env.base.sh
+bash .github/skills/single-branch-development/scripts/install-hooks.sh --apply
 ```
 
-The installer seeds `.github/hooks/track-env.base.sh` from detected repo signals (`go.mod`->go-test, `pyproject.toml`->py, `package.json`->ts, `migrations/`, default branch) — repo-policy vars filled, task-derived scope left empty so an unedited copy fails loud.
+The installer auto-detects repo signals (`go.mod`, `pyproject.toml`, `package.json`, `migrations/`) and seeds `track-env.base.sh` — repo-policy vars filled in, task-derived scope left empty so an unedited copy **fails loud**.
 
-### 2. Configure a run
-Edit `.github/hooks/track-env.base.sh` (committed, repo-wide) for policy defaults, and optionally a gitignored `.github/hooks/track-env.sh` per worktree for overrides. Precedence: **exported env > worktree `track-env.sh` > repo `track-env.base.sh` > script default.**
+### 2️⃣ Configure
 
-### 3. Invoke a skill
-Point Copilot at the task and let the skill drive — e.g. *"implement this story on a branch using single-branch-development"* or *"run tracks 1, 2, 3 in parallel"*. The worker stops at `gh pr create --draft`; a human owns the merge.
+Edit `.github/hooks/track-env.base.sh` (committed, repo-wide policy defaults).  
+Optionally add a gitignored `.github/hooks/track-env.sh` per worktree for overrides.
 
-### 4. Run the self-tests
+Precedence: `exported env` > `worktree track-env.sh` > `repo track-env.base.sh` > `script default`
+
+Key env vars:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `TRACK_ALLOWED_PREFIXES` | *(required)* | Colon-separated path prefixes the worker may edit |
+| `TRACK_MAX_TOOL_CALLS` | `200` | Hard ceiling on tool calls per run |
+| `TRACK_TOKEN_ESTIMATE` | `1` | Enable transcript-based token estimate at Stop |
+| `TRACK_SENTINEL` | `1` | Enable secrets/debug scan at Stop |
+| `RUN_ID` | minted by preflight | Stable identifier threading branch ↔ PR ↔ run record |
+
+### 3️⃣ Invoke a skill
+Point Copilot at the task and let the skill drive:
+
+- *"implement this story using single-branch-development"* → Flow 1
+- *"run tracks 1, 2, 3 in parallel using executing-parallel-tracks"* → Flow 2
+- *"address the PR review comments using pr-review-feedback"* → Flow 4
+
+The worker stops at `gh pr create --draft`. **A human owns the merge.**
+
+### 4️⃣ Self-test the bundle
+
 ```bash
 bash .github/skills/single-branch-development/tests/test-skill.sh
 bash .github/skills/executing-parallel-tracks/tests/test-skill.sh
@@ -129,14 +244,16 @@ bash .github/skills/executing-parallel-tracks/tests/test-skill.sh
 
 ---
 
-## Design principles
+## 🧠 Design principles
 
-- **Evidence before assertions.** A run cannot claim done; the evidence gate reads captured, fingerprinted test output.
-- **Fail-secure gates.** Scope, frozen paths, and destructive ops are denied by default; you opt into looser behavior explicitly.
-- **No self-merge.** Every worker physically stops at a draft PR. Integration is a human/merge-queue decision.
-- **Independently traceable & revertible.** One `RUN_ID` threads branch, PR, commit trailer, and run record; one worktree = one revert.
-- **Self-recovering resume.** State lives in committed history + `runs/<RUN_ID>.json`, not in the model's memory of the session.
-- **Mechanical where possible, prompt where not.** Hooks enforce paths/commands/counters; judgement gates (TDD ordering, maker/checker split, review quality) stay as instructions because a hook can't see reasoning.
+| Principle | Meaning |
+|---|---|
+| 📸 **Evidence before assertions** | A run cannot *claim* done — the evidence gate reads fingerprinted test output |
+| 🛡️ **Fail-secure gates** | Scope, frozen paths, and destructive ops denied by default; you opt into looser behavior explicitly |
+| 🚫 **No self-merge** | Every worker stops at a draft PR — integration is a human/merge-queue decision |
+| 🧵 **Independently traceable** | One `RUN_ID` threads branch ↔ PR ↔ commit trailer ↔ run record |
+| ♻️ **Self-recovering** | State lives in committed history + `runs/<RUN_ID>.json`, not model memory |
+| 🔩 **Mechanical where possible** | Hooks enforce paths/commands/counters; judgement gates stay as instructions |
 
 ---
 
