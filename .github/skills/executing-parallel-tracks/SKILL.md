@@ -104,8 +104,8 @@ that must hold ("do not edit frozen entrypoints; do not delete existing tests"),
   "status": "blocked",          // success | blocked | no-progress | budget-exceeded
   "evidence": { "lint": "clean", "unit": "42 passed", "integration": "exit 1", "e2e": "n/a" },
   "iterations": 12,
-  "tokens": 48000,
-  "cost_usd": 0.91,
+  "tool_calls": 137,             // mechanical (track-meter.sh)
+  "token_estimate": 48000,      // rough chars/4 estimate (track-tokens.sh)
   "started_ts": "2026-06-26T14-03-11Z",  // first hook event — run wall-clock start
   "last_ts": "2026-06-26T14-11-05Z",     // last hook event — now - last_ts = idle/staleness
   "blocker": "flaky Testcontainers Postgres startup",
@@ -237,8 +237,11 @@ Export the manifest's per-track Docker/DB namespace before any integration run (
 ### 3. Fan out (one autonomous worker per track)
 
 Use `dispatching-parallel-agents` to launch one worker per track. Each worker executes
-`single-branch-development` **inside its own worktree only** for the per-branch pipeline (TDD,
-two-stage review, evidence, and draft PR handoff).
+`single-branch-development` **inside its own worktree only** for the per-branch pipeline. Each
+worker selects its own execution core from the task shape — **scaffold** (non-behavioral bootstrap),
+**story** (phased TDD for new/changed behavior), or **refactor** (behavior-preserving keep-green) —
+then runs preflight → isolate → core → evidence gate → draft-PR handoff. Mixed-mode fleets are fine
+(e.g. one scaffold track plus three story tracks).
 
 Pass each worker: run-id, task IDs, file-ownership scope, manifest commands, and project invariants.
 If bundled hooks are enabled, resolve each worker's env two-tier before launch (per-track +
@@ -255,11 +258,14 @@ This orchestrator then applies the stricter parallel-only overlays:
 ### 4. Per-track finish → DRAFT PR (autonomous, success only)
 
 Only a `success` run reaches this step. The worker opens a **draft** PR as the final step of
-`single-branch-development`:
+`single-branch-development`, building the body from [`templates/pr-body.md`](../single-branch-development/templates/pr-body.md)
+with its **Auto** block rendered by [`track-report.sh`](../single-branch-development/scripts/track-report.sh)
+(files changed, evidence + fingerprints, `tool_calls` / `trace[]`, token estimate — all from
+`runs/<run-id>.json`, never re-typed):
 ```bash
 gh pr create --draft \
   --title "track/<id> [run <run-id>]" \
-  --body "$(cat runs/<run-id>/handoff.md)" \
+  --body "$(bash .github/skills/single-branch-development/scripts/track-report.sh <run-id>)" \
   --label agent-generated
 ```
 The PR body carries the run-id, the goal contract, and the pasted evidence (test output, cost) — the
@@ -331,6 +337,6 @@ Start low; graduate only after weeks of clean runs.
 
 - `track-manifest.template.md` (bundled) — copy into a repo and fill per project.
 - [`scripts/track-precheck.sh`](scripts/track-precheck.sh) (bundled, parallel-only) — the mechanical Precheck overlap gate: reads a JSON array of `{id, prefixes}` on stdin, exits 0 when all tracks' ownership prefixes are mutually disjoint, or exit 2 with the exact colliding pair / config error (empty ownership, duplicate id). Run it in Step 1 before fan-out.
-- The Copilot agent-hook bundle is **owned by `single-branch-development`** ([`track-hooks.json`](../single-branch-development/templates/track-hooks.json) + [`scripts/track-*.sh`](../single-branch-development/scripts/)): `track-guard.sh` (PreToolUse ownership + push lockout), `track-evidence.sh` / `track-meter.sh` (PostToolUse evidence + tool-call ceiling), `track-trace.sh` (Subagent trace), `track-notify.sh` (Stop webhook). This orchestrator reuses it and layers per-track/global env on top.
+- The Copilot agent-hook bundle is **owned by `single-branch-development`** ([`track-hooks.json`](../single-branch-development/templates/track-hooks.json) + [`scripts/track-*.sh`](../single-branch-development/scripts/)) and reused whole by every worker: `track-reconcile.sh` (SessionStart resume), `track-guard.sh` (PreToolUse ownership + push lockout), `track-evidence.sh` / `track-meter.sh` (PostToolUse evidence + tool-call ceiling), `track-trace.sh` (Subagent trace with per-spawn reason), `track-evidence-gate.sh` / `track-tokens.sh` / `track-sentinel.sh` / `track-notify.sh` (Stop: freshness gate, token estimate, secrets scan, webhook). Manual/CLI members: `track-preflight.sh` (mint/recover RUN_ID), `track-report.sh` (deterministic PR-body Auto block), `track-note.sh` (self-reported skill/loop trace). This orchestrator reuses the bundle and layers per-track/global env on top. See [`references/hooks.md`](../single-branch-development/references/hooks.md) for the full per-script contract.
 - [Copilot agent hooks (GitHub Docs)](https://docs.github.com/en/copilot/concepts/agents/hooks) · [Agent hooks in VS Code](https://code.visualstudio.com/docs/copilot/customization/hooks) · [Hooks reference (per-event I/O schema)](https://code.visualstudio.com/docs/agents/reference/hooks-reference) — events, JSON I/O, exit codes, Claude/CLI cross-compatibility.
 - Composes: `using-git-worktrees`, `dispatching-parallel-agents`, `single-branch-development`.

@@ -191,7 +191,7 @@ suite "Suite 3 — Embedded Run Record JSON Schema"
 assert "33 embedded run record is valid JSON" \
   jq empty <<< "$RUN_RECORD_JSON"
 
-for f in run_id track branch goal status evidence iterations tokens cost_usd \
+for f in run_id track branch goal status evidence iterations tool_calls token_estimate \
          blocker next_step pr_url trace; do
   assert "34+ run record has field: $f" \
     jq -e "has(\"$f\")" <<< "$RUN_RECORD_JSON"
