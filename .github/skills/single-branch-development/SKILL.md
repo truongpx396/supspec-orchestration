@@ -61,7 +61,8 @@ Steps 1–3 (before) and 5–8 (after) are the **universal bracket** — identic
 runs: preflight, reconcile, isolation, and the evidence-gate + draft-PR boundary are reused unchanged
 by every core. Step 4 is the **execution core**: always scaffold, story, or refactor mode, never a
 free-form per-task loop. See the [skill-per-step map](#skill-per-step-map) for which superpower skill
-owns each step.
+owns each step **and whether that step runs in-session or dispatches subagents** (🧩 skill vs 🤖
+subagent vs ⚙️ script).
 
 1. **Preflight & confirm** — run [`scripts/track-preflight.sh`](scripts/track-preflight.sh)
    (`inspect` mode) before touching the repo. Supply only the **track slug** (`TRACK_ID=a`); the
@@ -174,20 +175,33 @@ owns each step.
 
 ## Skill-Per-Step Map
 
-| Step | Superpower skill / script |
-|------|---------------------------|
-| 1 Preflight | `track-preflight.sh` (bundled) |
-| 2 Reconcile | `track-reconcile.sh` (bundled) |
-| 3 Isolate | `using-git-worktrees` |
-| 4 Core — **story** RED author | `dispatching-parallel-agents` (+ governance brief in each maker) |
-| 4 Core — **story** RED review + freeze | `requesting-code-review` + governance (constitution + matched `.github/instructions/*`) + `security-and-owasp` |
-| 4 Core — **story** incremental green | `subagent-driven-development` (→ `test-driven-development`, `requesting-code-review`) |
-| 4 Core — **refactor** pin-green + characterize | `dispatching-parallel-agents` (+ governance brief in each maker) + `requesting-code-review` |
-| 4 Core — **refactor** incremental transform (keep green) | `subagent-driven-development` (+ governance + `security-and-owasp` on trust boundaries) |
-| 4 Core — **scaffold** generate | `dispatching-parallel-agents` (+ governance brief in each maker) |
-| 4 Core — **scaffold** review | `requesting-code-review` + governance (constitution — hard gate) |
-| 5–6 Converge & gate | `verification-before-completion` |
-| 8 Finish | draft PR — **overrides** `finishing-a-development-branch` |
+**Three kinds of trigger fire in this pipeline — the `Kind` column tags every row so you always know
+whether a *skill* runs in your own session or a *subagent* is dispatched:**
+
+- 🧩 **skill** — a superpower `SKILL.md` the **current** agent reads and follows **in-session**: no new
+  agent, no isolated context, your session's history stays intact.
+- 🤖 **subagent** — a **dispatched** agent instance with **isolated context + a hand-constructed brief**
+  (spawned via the `runSubagent`/Task tool). Subagents are **not** named catalog entries you trigger —
+  they are runtime workers, always spawned **by** one of the two *dispatcher skills*
+  (`dispatching-parallel-agents`, `subagent-driven-development`), and always cast in a role: **maker**
+  (authors/implements) or **reviewer** (spec + quality checker). "🧩 skill → 🤖 subagents" means the
+  named skill is what *you* invoke, and *it* then fans out subagents.
+- ⚙️ **script** — a bundled hook/CLI from the hooks bundle: mechanical, deterministic, no LLM.
+
+| Step | Fires | Kind |
+|------|-------|------|
+| 1 Preflight | `track-preflight.sh` | ⚙️ script |
+| 2 Reconcile | `track-reconcile.sh` | ⚙️ script |
+| 3 Isolate | `using-git-worktrees` | 🧩 skill |
+| 4 Core — **story** RED author | `dispatching-parallel-agents` → **N× maker** subagents (each carries the governance brief) | 🧩 skill → 🤖 subagents |
+| 4 Core — **story** RED review + freeze | `requesting-code-review` + governance (constitution + matched `.github/instructions/*`) + `security-and-owasp` | 🧩 skill |
+| 4 Core — **story** incremental green | `subagent-driven-development` → per-task **maker** + **reviewer** subagents (wraps `test-driven-development`, `requesting-code-review`) | 🧩 skill → 🤖 subagents |
+| 4 Core — **refactor** pin-green + characterize | `dispatching-parallel-agents` → **N× maker** subagents (+ governance brief) then `requesting-code-review` | 🧩 skill → 🤖 subagents |
+| 4 Core — **refactor** incremental transform (keep green) | `subagent-driven-development` → **maker** + **reviewer** subagents (+ governance + `security-and-owasp` on trust boundaries) | 🧩 skill → 🤖 subagents |
+| 4 Core — **scaffold** generate | `dispatching-parallel-agents` → **N× maker** subagents (each carries the governance brief) | 🧩 skill → 🤖 subagents |
+| 4 Core — **scaffold** review | `requesting-code-review` + governance (constitution — hard gate) | 🧩 skill |
+| 5–6 Converge & gate | `verification-before-completion` | 🧩 skill |
+| 8 Finish | draft PR — **overrides** `finishing-a-development-branch` | 🧩 skill (overridden) |
 
 ## Quality Gates (Owned Here)
 
