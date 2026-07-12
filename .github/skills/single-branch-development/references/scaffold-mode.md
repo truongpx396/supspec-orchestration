@@ -86,7 +86,7 @@ test-first cycle and no per-task implement↔review loop to run.
 | 2 | Fan-out generation | `dispatching-parallel-agents` | One subagent per independent domain / disjoint-file cluster returns its file bodies in parallel — safe because nothing writes |
 | 3 | Apply bodies | — (controller = single writer) | Collapses N proposals into one tree; serial application, no skill |
 | 4 | Batch evidence | `verification-before-completion` | "Does it work" proof — real build/lint/bring-up output, not assertion |
-| 5 | Whole-diff review | `requesting-code-review` | "Is it correct" proof — quality-only rubric (the guard already cleared trust boundaries) |
+| 5 | Whole-diff review | `requesting-code-review` | "Is it correct" proof — quality + governance rubric (constitution hard gate + matched `.github/instructions/*`; no security add-on — guard cleared trust boundaries) |
 | 6 | Draft-PR finish | **overrides** `finishing-a-development-branch` | Worker stops at a draft PR; merge is owned by repo/CI |
 
 **Steps 4 and 5 are orthogonal and both mandatory.** `verification-before-completion` (Step 4)
@@ -199,10 +199,11 @@ at freeze & verify-all.)
 ### Step 5 — one review, not two-stage
 
 A single `requesting-code-review` pass over the entire scaffold diff replaces SDD's per-task
-stage-1 (spec) + stage-2 (quality) loop. That rubric is code-quality only, which is appropriate:
-the guard already established there is **no** trust-boundary surface in the batch, so the security
-add-on that story mode requires does not apply. (If it *did* apply, the guard would have refused
-the batch.)
+stage-1 (spec) + stage-2 (quality) loop. The rubric is **quality + governance** (project
+constitution as a hard gate; matched `.github/instructions/*` applied to the diff). The security
+add-on that story mode requires does **not** apply — the guard already established there is no
+trust-boundary surface in the batch. (If a task *did* touch a trust boundary, the guard would have
+refused the batch.)
 
 ## What scaffold mode drops vs. keeps
 
@@ -210,7 +211,7 @@ the batch.)
 |---|---|---|
 | Execution | Serial: RED batch → incremental green | **Parallel generate (one agent per disjoint-file cluster)** → serial apply/land |
 | TDD (test-first) | Required — story-scoped RED batch | **Dropped** — nothing behavioral to test |
-| Review | RED review + per-increment spec/quality (+ security) | **One** whole-diff `requesting-code-review` |
+| Review | RED review + per-increment spec/quality (+ security) | **One** whole-diff `requesting-code-review` (quality + governance; no security add-on) |
 | Evidence | Whole story suite, converged at freeze & verify-all | **One** batch build/lint/bring-up capture — **kept** |
 | Commit | One per increment | One (or few) for the batch |
 | Preflight / isolation / run-log / hooks / draft-PR | — | **Identical (reused)** |

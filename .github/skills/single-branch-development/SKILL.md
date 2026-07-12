@@ -79,8 +79,8 @@ subagent vs ⚙️ script).
    flag, treat confirm as required, never skippable by default. A prerequisite failure hard-fails
    regardless. Re-run with `--commit` to persist. See [references/hooks.md](references/hooks.md) for
    `RUN_ID` mechanics.
-   **Derive the task-shaped config here.** From the task set's file/language surface, set — *before*
-   inspect — the values whose correct value depends on *this* task (not repo-wide policy):
+   **Derive task-shaped config before running the script.** From the task set's file/language
+   surface, set the values whose correct value depends on *this* task (not repo-wide policy):
    `TRACK_ALLOWED_PREFIXES` (writable scope) and any `TRACK_FROZEN_PATHS`; `PREFLIGHT_REQUIRE_TOOLCHAIN`
    (the bins the task's languages need, so a missing tool fails here not mid-run); and
    `TRACK_REQUIRED_EVIDENCE` (the evidence *floor* for the task's languages). Preflight echoes each in
@@ -153,11 +153,10 @@ subagent vs ⚙️ script).
    convergence and requires re-running all kinds.
 6. **Evidence gate** (`verification-before-completion`) — paste real command output; "all green"
    without pasted output is not done.
-7. **Update the run artifact** if your workflow tracks one (`runs/<run-id>.json`, handoff notes). If
-   you logged the self-reported trace in Step 4, `skills[]` (ordered skill activations) and
-   `iterations` (loop count) now live in the record alongside the hook-observed `tool_calls` / `trace[]`
-   / `evidence[]` — read them together, but never conflate the self-reported fields with the mechanical
-   ones.
+7. **Confirm the run record** — `runs/<RUN_ID>.json` is auto-populated with hook-observed fields
+   (`tool_calls`, `trace[]`, `evidence[]`, heartbeat). If you called `track-note.sh` in Step 4,
+   `skills[]` and `iterations` are in the record too. Never conflate self-reported fields
+   (`skills[]`, `iterations`) with hook-observed ones — they carry different provenance.
 8. **Draft-PR finish** — open a **draft** PR and stop. This **replaces** SDD's call to
    `finishing-a-development-branch`; the worker never reaches its merge menu. Integration/merge is
    owned by repo process/CI. **Build the PR body from [`templates/pr-body.md`](templates/pr-body.md):**
@@ -199,7 +198,7 @@ whether a *skill* runs in your own session or a *subagent* is dispatched:**
 | 4 Core — **refactor** pin-green + characterize | `dispatching-parallel-agents` → **N× maker** subagents (+ governance brief) then `requesting-code-review` | 🧩 skill → 🤖 subagents |
 | 4 Core — **refactor** incremental transform (keep green) | `subagent-driven-development` → **maker** + **reviewer** subagents (+ governance + `security-and-owasp` on trust boundaries) | 🧩 skill → 🤖 subagents |
 | 4 Core — **scaffold** generate | `dispatching-parallel-agents` → **N× maker** subagents (each carries the governance brief) | 🧩 skill → 🤖 subagents |
-| 4 Core — **scaffold** review | `requesting-code-review` + governance (constitution — hard gate) | 🧩 skill |
+| 4 Core — **scaffold** review | `requesting-code-review` + governance (constitution — hard gate; matched `.github/instructions/*`; no security add-on — guard cleared trust boundaries) | 🧩 skill |
 | 5–6 Converge & gate | `verification-before-completion` | 🧩 skill |
 | 8 Finish | draft PR — **overrides** `finishing-a-development-branch` | 🧩 skill (overridden) |
 
@@ -358,7 +357,8 @@ disjointness for parallel-generation latency:
 3. **Apply** all bodies at once (controller = single writer) → one converged tree.
 4. **One `verification-before-completion` capture** — build + lint + bring-up health check; paste
    output. This proves the scaffold *works*.
-5. **One `requesting-code-review`** over the whole diff (quality-only — the guard cleared trust
+5. **One `requesting-code-review`** over the whole diff (quality + governance: constitution hard
+   gate + matched `.github/instructions/*`; no security add-on — the guard cleared trust
    boundaries), then the same **draft-PR finish**.
 
 Steps 4 and 5 are orthogonal and both mandatory: verification proves it *works*, review proves it is
