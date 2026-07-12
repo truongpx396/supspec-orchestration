@@ -94,7 +94,10 @@ that must hold ("do not edit frozen entrypoints; do not delete existing tests"),
 (the hard stops below). A goal with no evidence to fail against will always think it succeeded.
 
 **Run record (one per track, git-ignored `runs/` dir).** Each worker writes/updates
-`runs/<run-id>.json` — this is the trace anchor and the orchestrator's memory between ticks:
+`runs/<run-id>.json` — the trace anchor and the orchestrator's memory between ticks.
+The record uses the **same two-array schema** as `single-branch-development`:
+`trace[]` = hook-observed SubagentStart/Stop (mechanical); `skills[]` = self-reported skill
+activations (model's claim, provenance-tagged). Never mix them.
 ```json
 {
   "run_id": "2026-06-26T14-03_us1",
@@ -104,29 +107,35 @@ that must hold ("do not edit frozen entrypoints; do not delete existing tests"),
   "status": "blocked",          // success | blocked | no-progress | budget-exceeded
   "evidence": { "lint": "clean", "unit": "42 passed", "integration": "exit 1", "e2e": "n/a" },
   "iterations": 12,
+  "iterations_self_reported": true,
   "tool_calls": 137,             // mechanical (track-meter.sh)
-  "token_estimate": 48000,      // rough chars/4 estimate (track-tokens.sh)
+  "token_estimate": 48000,       // rough chars/4 estimate (track-tokens.sh)
   "started_ts": "2026-06-26T14-03-11Z",  // first hook event — run wall-clock start
-  "last_ts": "2026-06-26T14-11-05Z",     // last hook event — now - last_ts = idle/staleness
+  "last_ts": "2026-06-26T14-11-05Z",     // last hook event — now − last_ts = idle/staleness
   "blocker": "flaky Testcontainers Postgres startup",
   "next_step": "pin image tag; retry integration",
   "pr_url": null,
   "trace": [
-    { "t": "2026-06-26T14-03-11Z", "kind": "skill",    "name": "using-git-worktrees" },
-    { "t": "2026-06-26T14-03-40Z", "kind": "skill",    "name": "test-driven-development" },
-    { "t": "2026-06-26T14-05-02Z", "kind": "subagent", "name": "implementer",  "task": "T038" },
-    { "t": "2026-06-26T14-09-18Z", "kind": "subagent", "name": "spec-reviewer", "task": "T038" },
-    { "t": "2026-06-26T14-11-05Z", "kind": "subagent", "name": "verifier",      "task": "T038", "result": "fail" }
+    { "t": "2026-06-26T14-05-02Z", "kind": "subagent", "event": "start", "agent_id": "sub-01", "agent_type": "implementer",   "reason": "green T038 impl" },
+    { "t": "2026-06-26T14-09-00Z", "kind": "subagent", "event": "stop",  "agent_id": "sub-01", "agent_type": "implementer",   "stop_reason": "done" },
+    { "t": "2026-06-26T14-09-05Z", "kind": "subagent", "event": "start", "agent_id": "sub-02", "agent_type": "spec-reviewer", "reason": "stage-1 review T038" },
+    { "t": "2026-06-26T14-11-05Z", "kind": "subagent", "event": "stop",  "agent_id": "sub-03", "agent_type": "verifier",      "stop_reason": "fail: integration test still red" }
+  ],
+  "skills": [
+    { "t": "2026-06-26T14-03-11Z", "skill": "using-git-worktrees",      "step": "2-isolate", "self_reported": true },
+    { "t": "2026-06-26T14-03-40Z", "skill": "subagent-driven-development", "step": "4-green", "self_reported": true }
   ]
 }
 ```
 Add `runs/` to `.gitignore`. The orchestrator aggregates all records into `runs/summary.md` for review.
 
-**Activation trace.** `trace` is an append-only event log the worker writes one line to **every time**
-it invokes a skill or spawns a subagent — giving a readable `skill A → skill B → subagent X → …`
-flow for that run. Keep each entry tiny (timestamp, `kind` = skill|subagent, `name`, optional `task`
-and `result`). This is the cheap middle layer between the one-line `blocker` and the full session
-transcript: enough to see *which step* the worker was in when it failed, without reading every turn.
+**Two arrays, two sources.** `trace[]` is written by `track-trace.sh` (SubagentStart/Stop hooks) with
+fields `{t, kind:"subagent", event:"start"|"stop", agent_id, agent_type, reason?, stop_reason?}`.
+`skills[]` is written by `track-note.sh skill <name>` (the model's self-reported claim) with fields
+`{t, skill, step, self_reported:true}`. Together they give a readable `skill A → subagent X → …`
+flow for each run — the cheap middle layer between the one-line `blocker` and the full session
+transcript. Never conflate them: `trace[]` entries are hook-observed facts; `skills[]` entries are
+model assertions.
 
 ## Hard stops (enforced by the orchestrator)
 

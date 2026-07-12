@@ -66,15 +66,17 @@ is triage → fix-under-test → re-evidence → update.
 
 ## Skill-Per-Step Map
 
-| Step | Superpower skill / script |
-|------|---------------------------|
-| 1 Triage feedback | `receiving-code-review` |
-| 2 Reconcile / resume | `track-reconcile.sh` (single-branch-development bundle) |
-| 3 Behavioral fix | `test-driven-development` (+ `systematic-debugging` for regressions) |
-| 3 Independent fixes | `dispatching-parallel-agents` (generate-only) |
-| 4 Re-review delta | `requesting-code-review` + `security-and-owasp` (trust-boundary) |
-| 5 Converge & re-evidence | `verification-before-completion` |
-| 6 Update PR | fast-forward `git push` (opt-in) **or** hand back — never `gh pr merge` |
+Kind legend (same as `single-branch-development`): 🧩 **skill** = runs in-session; 🤖 **subagent** = dispatched agent; ⚙️ **script** = bundled hook/CLI.
+
+| Step | Superpower skill / script | Kind |
+|------|---------------------------|------|
+| 1 Triage feedback | `receiving-code-review` | 🧩 skill |
+| 2 Reconcile / resume | `track-reconcile.sh` (single-branch-development bundle) | ⚙️ script |
+| 3 Behavioral fix | `test-driven-development` (+ `systematic-debugging` for regressions) | 🧩 skill |
+| 3 Independent fixes | `dispatching-parallel-agents` → read-only maker subagents | 🧩 skill → 🤖 subagents |
+| 4 Re-review delta | `requesting-code-review` + `security-and-owasp` (trust-boundary) | 🧩 skill |
+| 5 Converge & re-evidence | `verification-before-completion` | 🧩 skill |
+| 6 Update PR | fast-forward `git push` (opt-in) **or** hand back — never `gh pr merge` | ⚙️ script |
 
 ## Hooks (Reused, Not Owned)
 

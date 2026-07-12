@@ -191,8 +191,8 @@ suite "Suite 3 — Embedded Run Record JSON Schema"
 assert "33 embedded run record is valid JSON" \
   jq empty <<< "$RUN_RECORD_JSON"
 
-for f in run_id track branch goal status evidence iterations tool_calls token_estimate \
-         blocker next_step pr_url trace; do
+for f in run_id track branch goal status evidence iterations iterations_self_reported tool_calls token_estimate \
+         blocker next_step pr_url trace skills; do
   assert "34+ run record has field: $f" \
     jq -e "has(\"$f\")" <<< "$RUN_RECORD_JSON"
 done
@@ -204,11 +204,14 @@ assert "47 status is one of the 4 terminal states" \
 assert "48 trace is an array with ≥2 entries" \
   jq -e '(.trace | length) >= 2' <<< "$RUN_RECORD_JSON"
 
-assert "49 every trace entry has t, kind, name" \
-  jq -e '[.trace[] | has("t") and has("kind") and has("name")] | all' <<< "$RUN_RECORD_JSON"
+assert "49 every trace entry has t, kind, event, agent_id, agent_type" \
+  jq -e '[.trace[] | has("t") and has("kind") and has("event") and has("agent_id") and has("agent_type")] | all' <<< "$RUN_RECORD_JSON"
 
-assert "50 trace kind values are only 'skill' or 'subagent'" \
-  jq -e '[.trace[].kind] | all(. == "skill" or . == "subagent")' <<< "$RUN_RECORD_JSON"
+assert "50 trace kind values are only 'subagent'" \
+  jq -e '[.trace[].kind] | all(. == "subagent")' <<< "$RUN_RECORD_JSON"
+
+assert "50a skills[] array present and self_reported tagged" \
+  jq -e '(.skills | length) > 0 and ([.skills[] | .self_reported == true] | all)' <<< "$RUN_RECORD_JSON"
 
 # ═════════════════════════════════════════════════════════════════════════════
 # Suite 4 — Precheck Gate: Ownership Overlap Detection
