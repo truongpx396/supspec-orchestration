@@ -26,7 +26,7 @@
 # OPT-OUT via env — active by default (track-env.base.sh sets TRACK_TOKEN_ESTIMATE=1);
 # unset or set to empty to disable:
 #   TRACK_TOKEN_ESTIMATE  any non-empty value enables the hook (default: 1)
-#   RUN_ID                stable run-id for this worker (set by preflight --commit)
+#   RUN_ID                stable run-id for this worker (set by preflight --persist)
 #   RUNS_DIR              where run records live (default: runs)
 #
 # Wire this in track-hooks.json under "stop" (already done in the template).
@@ -52,7 +52,7 @@ tp="$(jq -r '.transcript_path // .transcriptPath // empty' <<<"$input")"
 
 RUNS_DIR="${RUNS_DIR:-runs}"
 rec="$RUNS_DIR/$RUN_ID.json"
-[ -f "$rec" ] || exit 0  # run record must already exist (preflight --commit creates it)
+[ -f "$rec" ] || exit 0  # run record must already exist (preflight --persist creates it)
 
 # Extract all text the model sent or received. jq outputs one string per match;
 # wc -c counts the raw byte count (close enough to chars for UTF-8 English/code).

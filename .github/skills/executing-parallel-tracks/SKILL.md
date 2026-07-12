@@ -218,6 +218,34 @@ entirely. Layer them: hooks (fast, in-session) → git `pre-push` (local backsto
 
 ## Pipeline (N Tracks)
 
+### 0. Analyze & plan waves (confirm before fan-out)
+
+**Before touching any branch**, read the requested stories/tasks and determine what can safely run in parallel and what must be sequenced.
+
+1. **Read the source**: if a `track-manifest.md` exists, use it. If absent, read `tasks.md` (or any dispatch/spec doc the user points to), extract the task set, infer the file-ownership surface per task, and draft a `track-manifest.md` — **do not silently invent one**; show it to the user.
+
+2. **Detect dependencies and overlap**: for each pair of requested tasks, check:
+   - Do they write overlapping file paths? (Overlap → must be sequential.)
+   - Does one produce a migration number or schema object the other reads? (Sequential.)
+   - Is there any explicit ordering stated in the spec? (Respect it.)
+
+3. **Produce a wave plan** — group tasks into the minimum number of waves where every task inside a wave is truly independent:
+   ```
+   Wave 1 (parallel): US1, US2, US3   — non-overlapping, independent
+   Wave 2 (parallel): US4, US5        — depend on Wave 1 merged; non-overlapping
+   Wave 3 (serial):   US6             — touches shared entrypoint, must run alone
+   ```
+
+4. **Confirm with the user before proceeding.** Present the wave plan: tasks per wave, why each is grouped as it is, the implied sequencing constraint between waves. Ask:
+   - "Run Wave 1 (US1+US2+US3) now, then wait for Wave 2?" — a simple yes/no.
+   - If the user wants a subset (e.g. only US1+US2), adjust the wave plan, recheck overlap, and confirm again.
+
+   **Do not fan out any worker until the user confirms the plan.** This is the one mandatory human checkpoint before autonomous work begins.
+
+5. **Sequential wave enforcement**: after Wave 1's PRs are all merged into the default branch, re-run Step 0 for Wave 2 — recheck the current tree for new overlaps introduced by Wave 1's changes, then confirm the next wave plan. Never start Wave N+1 before Wave N is merged.
+
+> **Why this step?** Pre-defined manifests are the stable-state happy path, but most real request start as "do user story 1, 2, 3" without a manifest. Analyzing first and confirming before fan-out prevents the worst failure mode: spinning up N workers only to discover mid-run that two of them are colliding on the same file.
+
 ### 1. Precheck gate (ask-back only on failure)
 
 Run all checks; proceed silently if all pass, else stop and ask the human with the specific failure:
@@ -313,6 +341,7 @@ Kind legend: 🧩 **skill** = runs in-session (reads a SKILL.md); 🤖 **subagen
 
 | Step | Fires | Kind |
 |------|-------|------|
+| 0 Analyze & plan waves | Read tasks.md / manifest → derive wave plan → confirm with user | (in-session reasoning) |
 | 1 Precheck | `track-precheck.sh` (ownership overlap gate) | ⚙️ script |
 | 2 Isolate (one per track) | `using-git-worktrees` | 🧩 skill |
 | 3 Fan out (one worker per track) | `dispatching-parallel-agents` → N× **worker** subagents, each running `single-branch-development` | 🧩 skill → 🤖 subagents |

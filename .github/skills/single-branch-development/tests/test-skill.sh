@@ -112,8 +112,17 @@ else fail "preflight: fresh start -> mode=start + RUN_ID minted"; fi
 TRACK_ID=tst-setup TASKS="T001-T005" TRACK_BASE_REF=main \
 PREFLIGHT_REQUIRE_GH=0 RUNS_DIR="$TMPDIR_RUNS" bash "$PREFLIGHT" --commit >/dev/null 2>&1
 ls "$TMPDIR_RUNS"/*.dispatch >/dev/null 2>&1 \
-  && pass "preflight: --commit persists .dispatch breadcrumb" \
-  || fail "preflight: --commit persists .dispatch breadcrumb"
+  && pass "preflight: --commit (deprecated alias) persists .dispatch breadcrumb" \
+  || fail "preflight: --commit (deprecated alias) persists .dispatch breadcrumb"
+
+# --persist is the primary flag name; it must behave identically to the --commit alias
+rm -f "$TMPDIR_RUNS"/*.dispatch
+TRACK_ID=tst-persist TASKS="T001-T005" TRACK_BASE_REF=main \
+PREFLIGHT_REQUIRE_GH=0 RUNS_DIR="$TMPDIR_RUNS" bash "$PREFLIGHT" --persist >/dev/null 2>&1
+ls "$TMPDIR_RUNS"/*tst-persist*.dispatch >/dev/null 2>&1 \
+  && pass "preflight: --persist persists .dispatch breadcrumb" \
+  || fail "preflight: --persist persists .dispatch breadcrumb"
+rm -f "$TMPDIR_RUNS"/*.dispatch
 
 # breadcrumb records the confirmed scope/toolchain/floor, not just identity
 rm -f "$TMPDIR_RUNS"/*.dispatch

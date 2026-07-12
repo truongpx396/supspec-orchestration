@@ -72,12 +72,12 @@ subagent vs ⚙️ script).
    that run automatically (there is no `--resume` flag). It prints a one-screen summary (Mode · Track
    · Tasks · RUN_ID · Branch · Base ref · Prereqs) and the same as JSON. **Present that emitted summary
    verbatim for approval — never re-type it into a hand-built table.** A re-rendered summary can drift
-   silently from what `--commit` actually stamps into the breadcrumb; the script's own output is the
+   silently from what `--persist` actually stamps into the breadcrumb; the script's own output is the
    single source of truth. **The interactive confirm is
    mandatory: STOP and get explicit human approval of this summary before Step 3 creates anything.**
    The only waiver is an explicitly-set `auto_confirm`/`--yes` (orchestrator runs only) — absent that
    flag, treat confirm as required, never skippable by default. A prerequisite failure hard-fails
-   regardless. Re-run with `--commit` to persist. See [references/hooks.md](references/hooks.md) for
+   regardless. Re-run with `--persist` to persist. See [references/hooks.md](references/hooks.md) for
    `RUN_ID` mechanics.
    **Derive task-shaped config before running the script.** From the task set's file/language
    surface, set the values whose correct value depends on *this* task (not repo-wide policy):
@@ -88,7 +88,7 @@ subagent vs ⚙️ script).
    **all** edits; `evidence_floor_set:false` means the gate is rules-only. Repo-wide catalog/policy
    (`TRACK_EVIDENCE_KINDS`/`RULES`, sentinel, ceilings, `RUNS_DIR`) stays in the committed
    `track-env.base.sh` — do not regenerate it per run. Confirm the derived values as part of the same
-   proceed-confirm, then `--commit` — which stamps the confirmed scope, frozen paths, toolchain, and
+   proceed-confirm, then `--persist` — which stamps the confirmed scope, frozen paths, toolchain, and
    evidence floor into `runs/<RUN_ID>.dispatch`, so the artifact is a faithful record of what was
    approved. Do not hand-widen scope mid-run.
 2. **Reconcile / resume** — run [`scripts/track-reconcile.sh`](scripts/track-reconcile.sh) to rebuild
@@ -144,7 +144,7 @@ subagent vs ⚙️ script).
    <name>` at each core step and `track-note.sh loop <phase>` once per RED→GREEN→review cycle to append
    an ordered, provenance-tagged `skills[]` / `iterations` record. These are the model's **own claim**
    (`self_reported:true`), never hook-observed; skip them if you don't want a self-attested trace. The
-   **mechanical** fields (`tool_calls`, `trace[]`, heartbeat) record automatically — preflight `--commit`
+   **mechanical** fields (`tool_calls`, `trace[]`, heartbeat) record automatically — preflight `--persist`
    persists `RUN_ID` into the installed `track-env.sh`, so even a solo run populates the record with no
    extra setup. See [references/hooks.md](references/hooks.md) for the full mechanics.
 5. **Freeze & verify-all** — once the last task's review passes, make **no further edits**, then run
@@ -280,7 +280,7 @@ Invariants this skill asserts; most are *realized by* SDD's loop, not re-run her
   preset — copy `templates/track-env.sh.example` → `.github/hooks/track-env.base.sh` — which
   travels into every worktree; add a gitignored `.github/hooks/track-env.sh` only to override a
   single worktree. Every hook auto-sources both. See [references/hooks.md](references/hooks.md#install).
-- **The run record self-activates in a solo run.** Preflight `--commit` persists `RUN_ID` as a managed
+- **The run record self-activates in a solo run.** Preflight `--persist` persists `RUN_ID` as a managed
   block in the installed `.github/hooks/track-env.sh` (retired at `--complete`), so `tool_calls` /
   `trace[]` / heartbeat accrue with no ceiling and no manual export; `TRACK_MAX_TOOL_CALLS` only *adds*
   the hard-stop. The write is gated on the installed-hooks marker (`track-env.base.sh`), so it never

@@ -9,8 +9,9 @@
 #                        emit JSON to stdout. READ-ONLY: writes nothing. Exit non-zero only
 #                        on a HARD prerequisite failure (missing gh/git/toolchain) — a
 #                        missing dep is not a preference, it blocks in every mode.
-#   --commit           — persist runs/<RUN_ID>.dispatch (the breadcrumb) after the caller
-#                        has confirmed. Idempotent: re-committing the same id is a no-op.
+#   --persist          — persist runs/<RUN_ID>.dispatch (the breadcrumb) after the caller
+#                        has confirmed. Idempotent: re-persisting the same id is a no-op.
+#                        (--commit stays as a deprecated alias for --persist.)
 #   --complete         — stamp completed_utc + duration_secs (now − created_utc) onto the
 #                        breadcrumb at draft-PR handoff. Write-once; the honest home for
 #                        "total run time" (a per-event hook never sees PR handoff).
@@ -48,7 +49,8 @@ unset __env_dir
 mode="inspect"
 for a in "$@"; do
   case "$a" in
-    --commit) mode="commit" ;;
+    --persist) mode="persist" ;;
+    --commit) mode="persist" ;;   # deprecated alias for --persist
     --inspect) mode="inspect" ;;
     --complete) mode="complete" ;;
   esac
@@ -182,9 +184,9 @@ if [ -n "$branch_override" ]; then
 fi
 prereq_ok=true; [ -n "$missing" ] && prereq_ok=false
 
-# --- commit phase: persist the breadcrumb, then exit -------------------------------
-if [ "$mode" = "commit" ]; then
-  [ "$prereq_ok" = true ] || die "refusing to commit breadcrumb — unmet prerequisites:$missing"
+# --- persist phase: persist the breadcrumb, then exit ------------------------------
+if [ "$mode" = "persist" ]; then
+  [ "$prereq_ok" = true ] || die "refusing to persist breadcrumb — unmet prerequisites:$missing"
   if [ -f "$rec_dispatch" ]; then
     printf '%s\n' "preflight: breadcrumb already present ($rec_dispatch) — no-op." >&2
   else
@@ -241,7 +243,7 @@ fi
 # original finish time. This is the honest home for "total run time" — a single stamp at
 # a real boundary, not a per-event hook (a PostToolUse hook never sees PR handoff).
 if [ "$mode" = "complete" ]; then
-  [ -f "$rec_dispatch" ] || die "cannot complete — no breadcrumb at $rec_dispatch (run --commit first)."
+  [ -f "$rec_dispatch" ] || die "cannot complete — no breadcrumb at $rec_dispatch (run --persist first)."
   if [ "$(jq -r '.completed_utc // empty' "$rec_dispatch" 2>/dev/null)" != "" ]; then
     printf '%s\n' "preflight: breadcrumb already completed ($rec_dispatch) — no-op." >&2
     printf '%s\n' "$run_id"
@@ -262,9 +264,9 @@ if [ "$mode" = "complete" ]; then
   tmp="$(mktemp)"
   jq --arg done "$now_utc" --argjson dur "$dur" \
     '.completed_utc = $done | .duration_secs = $dur' "$rec_dispatch" >"$tmp" && mv "$tmp" "$rec_dispatch"
-  # Retire the persisted RUN_ID activation block (written at --commit) so a finished
+  # Retire the persisted RUN_ID activation block (written at --persist) so a finished
   # run stops steering the recorder hooks and can't bleed into an unrelated later run.
-  # Same installed-hooks guard as --commit (skip the scripts/ source mirror).
+  # Same installed-hooks guard as --persist (skip the scripts/ source mirror).
   _env_dir="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
   if [ -f "$_env_dir/track-env.base.sh" ]; then
     env_file="$_env_dir/track-env.sh"
@@ -307,7 +309,7 @@ fi
   fi
   if [ "$prereq_ok" = true ]; then
     echo "  Prereqs:      OK (git ✓ · runs/ ✓ writable$([ "$require_gh" = 1 ] && echo ' · gh ✓ authed')${PREFLIGHT_REQUIRE_TOOLCHAIN:+ · $PREFLIGHT_REQUIRE_TOOLCHAIN ✓})"
-    echo "  → Proceed?    confirm to dispatch (then re-run with --commit to persist the breadcrumb)"
+    echo "  → Proceed?    confirm to dispatch (then re-run with --persist to persist the breadcrumb)"
   else
     echo "  Prereqs:      BLOCKED — missing:$missing"
     echo "  → Fix the missing prerequisite before dispatching."
