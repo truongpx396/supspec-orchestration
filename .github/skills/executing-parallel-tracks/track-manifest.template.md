@@ -21,7 +21,7 @@ it on first run if absent.
 
 > **Mechanical ceilings** are set in `.github/hooks/track-env.base.sh`, not here:
 > `TRACK_MAX_TOOL_CALLS` (tool-call proxy for the iteration ceiling) and
-> `MAX_TOKEN_ESTIMATE` (token-estimate ceiling; blocks stop + writes `status=budget-exceeded`
+> `TRACK_MAX_TOKEN_ESTIMATE` (token-estimate ceiling; blocks stop + writes `status=budget-exceeded`
 > when exceeded; set to `0` to disable).
 
 ---

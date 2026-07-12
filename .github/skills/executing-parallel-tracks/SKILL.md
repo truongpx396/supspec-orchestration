@@ -77,7 +77,7 @@ providing project-wide orchestrator defaults — nothing specific to any individ
 Per-track details (branch, worktree path, task IDs, owned paths) live in the **wave dispatch file**
 generated at Step 0, not in this manifest.
 
-Mechanical ceilings (`TRACK_MAX_TOOL_CALLS`, `MAX_TOKEN_ESTIMATE`) are set in
+Mechanical ceilings (`TRACK_MAX_TOOL_CALLS`, `TRACK_MAX_TOKEN_ESTIMATE`) are set in
 `.github/hooks/track-env.base.sh` — not in the manifest.
 
 If a needed field is missing, ask the user once for that specific value; do not guess.

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # track-tokens.sh — Stop hook: estimate token usage from the session transcript
-#                   and enforce a per-worker token ceiling (MAX_TOKEN_ESTIMATE).
+#                   and enforce a per-worker token ceiling (TRACK_MAX_TOKEN_ESTIMATE).
 #
 # Fires ONCE when the agent ends a turn (Stop / agentStop). Reads the transcript
 # file supplied in the hook payload, extracts every text field the model sent or
@@ -25,8 +25,8 @@
 #   tool.execution_start → data.arguments (tool call parameters)
 #   tool.execution_complete — only has a success flag, no output text in this format
 #
-# CEILING ENFORCEMENT (MAX_TOKEN_ESTIMATE):
-#   MAX_TOKEN_ESTIMATE sets a hard ceiling on estimated tokens. When the estimate
+# CEILING ENFORCEMENT (TRACK_MAX_TOKEN_ESTIMATE):
+#   TRACK_MAX_TOKEN_ESTIMATE sets a hard ceiling on estimated tokens. When the estimate
 #   first exceeds the ceiling the hook:
 #     1. Writes `status: "budget-exceeded"` to the run record.
 #     2. Prints a clear message with the estimate and ceiling.
@@ -45,14 +45,14 @@
 #   budget controls.
 #
 # CONFIG (set in track-env.base.sh):
-#   MAX_TOKEN_ESTIMATE   integer ceiling (e.g. 200000). Hook is a no-op when unset
+#   TRACK_MAX_TOKEN_ESTIMATE   integer ceiling (e.g. 200000). Hook is a no-op when unset
 #                        or 0. Set high enough that normal feature work never hits
 #                        it — only runaway agents should reach it.
 #   RUN_ID               stable run-id for this worker (set by preflight --persist)
 #   RUNS_DIR             where run records live (default: runs)
 #
 # Wire this in track-hooks.json under "stop" (already done in the template).
-# It is safe to deploy even without MAX_TOKEN_ESTIMATE — the hook is fully no-op.
+# It is safe to deploy even without TRACK_MAX_TOKEN_ESTIMATE — the hook is fully no-op.
 set -eufo pipefail
 
 # Bootstrap: load hook presets sitting beside this script, if present:
@@ -63,7 +63,7 @@ if [ -f "$__env_dir/track-env.sh" ]; then . "$__env_dir/track-env.sh"; fi
 if [ -f "$__env_dir/track-env.base.sh" ]; then . "$__env_dir/track-env.base.sh"; fi
 unset __env_dir
 
-[ "${MAX_TOKEN_ESTIMATE:-0}" -gt 0 ] || exit 0
+[ "${TRACK_MAX_TOKEN_ESTIMATE:-0}" -gt 0 ] || exit 0
 [ -n "${RUN_ID:-}" ] || exit 0
 
 input="$(cat)"
@@ -97,7 +97,7 @@ ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 tmp="$(mktemp)"
 
 # --- ceiling check (first exceedance: block stop; second: allow clean exit) --
-ceiling="${MAX_TOKEN_ESTIMATE:-0}"
+ceiling="${TRACK_MAX_TOKEN_ESTIMATE:-0}"
 if [ "$ceiling" -gt 0 ] && [ "$estimate" -gt "$ceiling" ]; then
   current_status="$(jq -r '.status // empty' "$rec" 2>/dev/null || true)"
   if [ "$current_status" = "budget-exceeded" ]; then

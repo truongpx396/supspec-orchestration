@@ -42,9 +42,17 @@ Built on **[SpecKit](https://github.com/github/spec-kit)** (spec → plan → ta
 
 ```mermaid
 graph TD
-  A["🗂️ SpecKit (upstream)<br/>speckit.specify → speckit.clarify → speckit.plan<br/>→ speckit.tasks → speckit.analyze"] -->|tasks.md| B
-  B["🔀 supspec-orchestration (this repo)<br/>single-branch-development  (one branch / track)<br/>executing-parallel-tracks  (N tracks, conductor)<br/>pr-review-feedback         (rework existing PR)"] -->|draft PR(s) + evidence| C
-  C["👤 human reviews → merge queue"]
+    subgraph SK ["🗂️ SpecKit — upstream"]
+        S1["specify → clarify → plan → tasks → analyze"]
+    end
+    subgraph SO ["🔀 supspec-orchestration — this repo"]
+        B1["single-branch-development  · one branch / track"]
+        B2["executing-parallel-tracks  · N tracks, conductor"]
+        B3["pr-review-feedback  · rework existing PR"]
+    end
+    C["👤 human reviews → merge queue"]
+    SK -->|tasks.md| SO
+    SO -->|draft PRs + evidence| C
 ```
 
 ---
@@ -150,6 +158,8 @@ A thin **per-branch bracket** (isolation before, evidence gate + draft-PR bounda
 
 All modes share: `using-git-worktrees` (isolation), `verification-before-completion` (evidence gate), `requesting-code-review` (self-review), and the full hooks bundle.
 
+> **Governance note.** `requesting-code-review` dispatches a reviewer subagent that automatically inherits any `.github/instructions/*.instructions.md` file whose `applyTo` glob matches the changed files — so `code-review-generic.instructions.md` (`applyTo: '**'`) is always in scope, and language/framework-specific instructions (`go.instructions.md`, `reactjs.instructions.md`, …) apply whenever the diff touches matching paths. No extra wiring needed.
+
 ### 🪢 executing-parallel-tracks
 The **conductor**: owns isolation, gates, traceability, and integration sequencing; delegates each track's implement/review/verify to `single-branch-development`. Starts with a dependency-aware wave analysis (Step 0) that derives a wave plan and requires your confirmation before spawning any worker.
 
@@ -184,26 +194,23 @@ Deep-dive docs (scaffold/story/refactor modes, hooks reference) live under `refe
 
 The skills are only as strong as the worker's compliance — unless the gates are **mechanical**. Copilot [agent hooks](https://docs.github.com/en/copilot/concepts/agents/hooks) run shell commands at lifecycle points (`PreToolUse`, `PostToolUse`, `SubagentStart/Stop`, `Stop`, …) and can block a tool call before it happens. Each script **no-ops unless its env is set**, so dropping the bundle in is safe before configuring anything.
 
-| Script | 🔗 Trigger Event | Scope | Purpose | What it enforces / records |
-|---|---|---|---|---|
-| `track-preflight.sh` | manual (Step 1) | per-track | **Lifecycle** | 🎫 Mint or recover stable `RUN_ID`; check prerequisites; persist resume breadcrumb |
-| `track-guard.sh` | `PreToolUse` | repo-policy | **Scope & guard** | 🛡️ Deny edits outside writable scope, frozen paths, artifacts, or destructive ops |
-| `track-evidence.sh` | `PostToolUse` | per-track | **Evidence & quality** | 📸 Capture test output + code fingerprint — what the tool saw, not a model claim |
-| `track-evidence-gate.sh` | `Stop` | repo-policy | **Evidence & quality** | 🚦 Block stop unless evidence is present, **fresh** (fingerprint matches tree), and passing |
-| `track-meter.sh` | `PostToolUse` | repo-policy | **Governance** | 🔢 Count tool calls + heartbeat; hard-stop at `TRACK_MAX_TOOL_CALLS` |
-| `track-trace.sh` | `SubagentStart/Stop` | per-track | **Observability** | 🔍 Record **why** each subagent was spawned (`agent_description`) + stop reason |
-| `track-tokens.sh` | `Stop` | repo-policy | **Governance** | 🪙 Estimate token usage; enforce `MAX_TOKEN_ESTIMATE` ceiling (blocks stop + writes `status=budget-exceeded`) |
-| `track-note.sh` | manual | per-track | **Observability** | 📝 Self-report ordered skill activations + loop counts (model-claim provenance tag) |
-| `track-sentinel.sh` | `Stop` | repo-policy | **Scope & guard** | 🔒 Scan staged diff for likely secrets / debug leftovers before handoff |
-| `track-notify.sh` | `Stop` | repo-policy | **Lifecycle** | 📣 Best-effort completion webhook |
-| `track-reconcile.sh` | `SessionStart` | per-track | **Lifecycle** | ♻️ Recover state from committed history + run record; stash untrusted work |
-| `track-report.sh` | manual (Step 8) | per-track | **Observability** | 📄 Render deterministic PR-body Auto block (diff, evidence, tool calls, trace) |
-| `install-hooks.sh` | manual | repo-wide | **Lifecycle** | 📦 Idempotent, consent-gated, drift-aware installer for the whole bundle |
+Scripts are listed in the order they typically fire across a track's lifetime:
 
-**Scope column:**
-- **repo-policy** — set once in `track-env.base.sh` (committed, same value for every track)
-- **per-track** — derived from the task set; different value per worktree
-- **repo-wide** — runs once during setup, not per-run
+| Script | 🔗 Trigger Event | Purpose | What it enforces / records |
+|---|---|---|---|
+| `install-hooks.sh` *(repo-wide)* | manual | **Lifecycle** | 📦 Idempotent, consent-gated, drift-aware installer for the whole bundle |
+| `track-preflight.sh` *(per-track)* | manual (Step 1) | **Lifecycle** | 🎫 Mint or recover stable `RUN_ID`; check prerequisites; persist resume breadcrumb |
+| `track-reconcile.sh` *(per-track)* | `SessionStart` | **Lifecycle** | ♻️ Recover state from committed history + run record; stash untrusted work |
+| `track-guard.sh` *(repo-policy)* | `PreToolUse` | **Scope & guard** | 🛡️ Deny edits outside writable scope, frozen paths, artifacts, or destructive ops |
+| `track-evidence.sh` *(per-track)* | `PostToolUse` | **Evidence & quality** | 📸 Capture test output + code fingerprint — what the tool saw, not a model claim |
+| `track-meter.sh` *(repo-policy)* | `PostToolUse` | **Governance** | 🔢 Count tool calls + heartbeat; hard-stop at `TRACK_MAX_TOOL_CALLS` |
+| `track-trace.sh` *(per-track)* | `SubagentStart/Stop` | **Observability** | 🔍 Record **why** each subagent was spawned (`agent_description`) + stop reason |
+| `track-note.sh` *(per-track)* | manual | **Observability** | 📝 Self-report ordered skill activations + loop counts (model-claim provenance tag) |
+| `track-sentinel.sh` *(repo-policy)* | `Stop` | **Scope & guard** | 🔒 Scan staged diff for likely secrets / debug leftovers before handoff |
+| `track-evidence-gate.sh` *(repo-policy)* | `Stop` | **Evidence & quality** | 🚦 Block stop unless evidence is present, **fresh** (fingerprint matches tree), and passing |
+| `track-tokens.sh` *(repo-policy)* | `Stop` | **Governance** | 🪙 Estimate token usage; enforce `TRACK_MAX_TOKEN_ESTIMATE` ceiling (blocks stop + writes `status=budget-exceeded`) |
+| `track-notify.sh` *(repo-policy)* | `Stop` | **Lifecycle** | 📣 Best-effort completion webhook |
+| `track-report.sh` *(per-track)* | manual (Step 8) | **Observability** | 📄 Render deterministic PR-body Auto block (diff, evidence, tool calls, trace) |
 
 Everything a run records lands in `runs/<RUN_ID>.json` (gitignored). Full documentation: **[references/hooks.md](.github/skills/single-branch-development/references/hooks.md)**.
 
@@ -218,14 +225,18 @@ Evidence is what separates "the agent claimed it worked" from "the agent proved 
 2. `track-evidence-gate.sh` at `Stop` checks: evidence present? fingerprint matches the current tree? all kinds passing?
 3. If the tree changed after capture (stale fingerprint) or evidence is missing → the gate blocks the agent from stopping.
 
-**Stack-aware defaults.** `install-hooks.sh --apply` detects repo signals and seeds `track-env.base.sh` with opinionated starting points:
+**Stack-aware defaults.** `install-hooks.sh --apply` detects repo signals and seeds `track-env.base.sh` with opinionated starting points. Signals marked *(auto)* are detected by the installer; others must be added manually to `TRACK_EVIDENCE_KINDS` and `TRACK_EVIDENCE_RULES`:
 
-| Signal | Default evidence kinds |
-|---|---|
-| `go.mod` present | `go-test: go test -race ./...` |
-| `pyproject.toml` present | `py: uv run pytest` |
-| `package.json` present | `ts: tsc --noEmit && npm test` |
-| `migrations/` present | `pg-explain: psql explain plan` |
+| Signal | Evidence kind | Default command |
+|---|---|---|
+| `go.mod` present *(auto)* | `go-test` | `go test -race ./...` |
+| `pyproject.toml` / `uv.lock` *(auto)* | `py` | `uv run pytest` |
+| `package.json` present *(auto)* | `ts` | `tsc --noEmit && npm test` |
+| `migrations/` directory *(auto)* | `pg-explain` | `psql -c 'EXPLAIN (ANALYZE, FORMAT JSON) …'` |
+| NATS producers/consumers *(add manually)* | `nats` | `nats consumer info <stream> <consumer>` |
+| Redis interactions *(add manually)* | `redis` | `redis-cli TTL <key>` |
+| REST / gRPC contract tests *(add manually)* | `contract` | `<e.g. buf lint && buf breaking>` |
+| E2E browser tests *(add manually)* | `e2e` | `npx playwright test` |
 
 These are **additive and fully modifiable** — edit `TRACK_EVIDENCE_KINDS` and `TRACK_EVIDENCE_RULES` in `track-env.base.sh` to add, replace, or remove kinds for your stack. No rewrite needed; the installer just saves the first-run ceremony.
 
@@ -252,6 +263,15 @@ These are **additive and fully modifiable** — edit `TRACK_EVIDENCE_KINDS` and 
   ]
 }
 ```
+
+**`status` values** — written by hooks, never by the model:
+
+| Status | Set when | Hook responsible |
+|---|---|---|
+| `success` | All evidence gates pass and run ends cleanly | `track-evidence-gate.sh` |
+| `blocked` | A hard dependency is unresolvable (e.g. ownership collision, preflight fail) | `track-preflight.sh` / worker |
+| `no-progress` | Tool-call ceiling reached with no forward movement | `track-meter.sh` |
+| `budget-exceeded` | Token-estimate ceiling reached (`TRACK_MAX_TOKEN_ESTIMATE`) | `track-tokens.sh` |
 
 `trace[]` = hook-observed subagent events (mechanical facts). `skills[]` = model's self-reported activations (provenance-tagged). Never mix them.
 
@@ -400,7 +420,7 @@ Example value: `*.go:go-test;*.py:py;*.tsx:ts;*.ts:ts;migrations/*:pg-explain`
 | `RUN_ID` | minted by preflight | Stable identifier threading branch ↔ PR ↔ commit trailer ↔ run record |
 | `RUNS_DIR` | `runs` | Directory for run records — must be gitignored |
 | `TRACK_MAX_TOOL_CALLS` | `200` | Hard ceiling on tool calls; run halts when reached |
-| `MAX_TOKEN_ESTIMATE` | `200000` | Token-estimate ceiling; blocks stop + writes `status=budget-exceeded` when exceeded. Set to `0` to disable. |
+| `TRACK_MAX_TOKEN_ESTIMATE` | `200000` | Token-estimate ceiling; blocks stop + writes `status=budget-exceeded` when exceeded. Set to `0` to disable. |
 | `TRACK_SENTINEL` | `1` | Scan staged diff for likely secrets/debug leftovers at Stop |
 | `TRACK_NOTIFY_WEBHOOK` | `""` | URL for best-effort completion webhook; empty = no notify |
 | `PREFLIGHT_REQUIRE_GH` | `1` | Require authenticated `gh` CLI at preflight (set `0` on bootstraps without a remote) |
@@ -423,7 +443,7 @@ bash .github/skills/executing-parallel-tracks/tests/test-skill.sh
 ```
 
 The test harnesses are a **documentation-contract fence + functional regression suite** in one:
-- **122 SBD tests** cover: preflight flag behavior (`--persist`, `--complete`, breadcrumb stamping), guard allow/deny decisions (scope, frozen paths, destructive ops, FF-push gating), evidence capture + gate (fingerprint freshness, stale detection, multi-kind), meter counting + hard-stop, trace schema, sentinel pattern matching, report Auto-block rendering, run-record field completeness, token ceiling enforcement, and structural checks on SKILL.md / hooks.md / templates.
+- **122 SBD tests** cover: preflight flag behavior (`--persist`, `--complete`, breadcrumb stamping), guard allow/deny decisions (scope, frozen paths, destructive ops, FF-push gating), evidence capture + gate (fingerprint freshness, stale detection, multi-kind), meter counting + hard-stop, trace schema, sentinel pattern matching, report Auto-block rendering, run-record field completeness, token ceiling enforcement (`TRACK_MAX_TOKEN_ESTIMATE`), and structural checks on SKILL.md / hooks.md / templates.
 - **195 EPT tests** cover: SKILL.md structural integrity (Steps 0–7, gates, wave planner), manifest template completeness, run-record schema (trace[]/ skills[] separation), precheck ownership-overlap detection (disjoint / overlapping / shared hotspot / 3-way), and structural governance assertions.
 
 ---

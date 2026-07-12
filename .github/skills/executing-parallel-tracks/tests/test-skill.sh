@@ -183,8 +183,8 @@ assert "22 max_concurrent_tracks field"    grep -q "max_concurrent_tracks"    "$
 assert "23 TRACK_EVIDENCE_RULES env var documented" grep -q "TRACK_EVIDENCE_RULES"     "$MANIFEST_TPL"
 assert "24 TRACK_EVIDENCE_KINDS env var documented"  grep -q "TRACK_EVIDENCE_KINDS"     "$MANIFEST_TPL"
 assert "25 Hook environment section present"          grep -q "Hook environment"          "$MANIFEST_TPL"
-assert "26 Mechanical ceilings note (MAX_TOKEN_ESTIMATE or TRACK_MAX_TOOL_CALLS)" \
-  grep -q "MAX_TOKEN_ESTIMATE\|TRACK_MAX_TOOL_CALLS"   "$MANIFEST_TPL"
+assert "26 Mechanical ceilings note (TRACK_MAX_TOKEN_ESTIMATE or TRACK_MAX_TOOL_CALLS)" \
+  grep -q "TRACK_MAX_TOKEN_ESTIMATE\|TRACK_MAX_TOOL_CALLS"   "$MANIFEST_TPL"
 assert "27 wave dispatch file reference present"      grep -q "wave dispatch"             "$MANIFEST_TPL"
 assert "28 Commands table present"         grep -q "lint\|unit test"          "$MANIFEST_TPL"
 assert "29 Evidence pack section present"  grep -q "Evidence pack"            "$MANIFEST_TPL"
