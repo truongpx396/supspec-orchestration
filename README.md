@@ -428,10 +428,10 @@ Example value: `*.go:go-test;*.py:py;*.tsx:ts;*.ts:ts;migrations/*:pg-explain`
 ### 3️⃣ Invoke a skill
 Point Copilot at the task and let the skill drive:
 
-- *"scaffold the project foundation (tasks T001–T005)"* → Flow 1
-- *"implement user story T012 using single-branch-development"* → Flow 2
-- *"refactor the auth module (task T031) using single-branch-development"* → Flow 3
-- *"execute user stories T020, T021, T022 in parallel using executing-parallel-tracks"* → Flow 4
+- *"implement Phase 1 Setup — shared infrastructure (T001–T010a)"* → Flow 1
+- *"implement Phase 3 User Story 1: Ingest knowledge into a searchable library (T035–T056)"* → Flow 2
+- *"refactor Phase 2 Foundational — frontend API client (T031) using single-branch-development"* → Flow 3
+- *"execute Phase 3 User Story 1, Phase 4 User Story 2, Phase 5 User Story 3 in parallel using executing-parallel-tracks"* → Flow 4
 
 The worker stops at `gh pr create --draft`. **A human owns the merge.**
 
