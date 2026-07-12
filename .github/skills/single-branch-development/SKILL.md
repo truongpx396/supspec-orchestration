@@ -122,7 +122,8 @@ subagent vs ⚙️ script).
    failing tests up front via the RED batch (refactor mode instead pins the existing suite green up
    front); (b) SDD's stage-2 review is quality-only, so every review also applies the standing
    **governance** — the project constitution (`.specify/memory/constitution.md`, if present) and the
-   `.github/instructions/*` whose `applyTo` globs match the changed files — and any trust-boundary
+   `.github/instructions/*` whose `applyTo` globs match the changed files (always includes
+   `code-review-generic.instructions.md` with `applyTo: '**'`) — and any trust-boundary
    change additionally applies `security-and-owasp.instructions.md`.
 
    **Governance is a *maker* obligation, not just a checker backstop.** Before **any** fan-out (scaffold
@@ -220,8 +221,11 @@ Invariants this skill asserts; most are *realized by* SDD's loop, not re-run her
   standing governance on top of the quality rubric — (a) the **project constitution**
   (`.specify/memory/constitution.md`, if the repo has one) as a *hard* gate: a diff that violates a
   stated principle fails review in **every** mode; (b) whichever **`.github/instructions/*`** files'
-  `applyTo` globs match the changed files (e.g. `go` for `**/*.go`, `reactjs`/`state-management` for
-  `**/*.tsx`), applied to the diff even when the reviewer didn't author the file. This is a
+  `applyTo` globs match the changed files — including `code-review-generic.instructions.md`
+  (`applyTo: '**'`), which is always in scope and supplies the baseline review rubric (priorities,
+  checklists, comment format); plus language/framework-specific files (`go.instructions.md` for
+  `**/*.go`, `reactjs.instructions.md`/`state-management.instructions.md` for `**/*.tsx`, etc.),
+  applied to the diff even when the reviewer didn't author the file. This is a
   prompt-level review invariant (no hook can read principle compliance) and **no-ops only when those
   files genuinely don't exist**, never by omission. The **same governance set is pushed upstream into
   every fan-out maker subagent's brief** (scaffold Step 2 / story RED-author / refactor characterize),
