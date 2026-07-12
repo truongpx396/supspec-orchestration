@@ -4,7 +4,7 @@ description: 'Orchestrate multiple independent implementation tracks in parallel
 git worktree, fully autonomously from implement through review, verification, and pull request.
 Use when asked to "run tracks in parallel", "execute track 1, 2, 3", "spawn parallel agents",
 "fan out user stories", or to run several isolated work-streams concurrently with TDD, evidence
-gates, and merge-queue integration. Reads a per-repo track-manifest.md for project specifics and
+gates, and merge-queue integration. Reads a per-repo Parallel Tracks Orchestrator Manifest for project specifics and
 composes the using-git-worktrees, dispatching-parallel-agents, and
 single-branch-development skills with strict parallel-only overlays.'
 ---
@@ -15,7 +15,7 @@ Portable orchestration for running N independent implementation tracks concurren
 the **conductor**: it owns isolation, gates, traceability, and integration sequencing, and delegates
 the per-track implement/review/verify work to `single-branch-development`. All project-specific facts
 (which tasks belong to which track, file ownership, build commands, concurrency cap) live in a
-per-repo `track-manifest.md` that this skill reads — never hardcode them here.
+per-repo Parallel Tracks Orchestrator Manifest at `.github/tracks/manifest.md` — never hardcode them here.
 
 **Core mental model:** a **fan-out → isolate → verify → PR → observe** pipeline. *You are the
 ceiling.* Parallelism is cheap; your review bandwidth and your ability to trace a failure is the
@@ -32,7 +32,7 @@ budget remaining, run registry) lives in the session executing it.
 - User says "execute track 1, track 2, track 3" / "run these tracks in parallel" / "fan out the stories".
 - Several work-streams are mutually independent (disjoint files, non-overlapping migrations) and can progress at once.
 - You want each track to run autonomously: implement → review → verify → open PR, with no human between tasks.
-- A repo has a `track-manifest.md` (or an equivalent dispatch/tasks document) defining the tracks.
+- A repo has a Parallel Tracks Orchestrator Manifest at `.github/tracks/manifest.md` (or an equivalent dispatch/tasks document) defining the tracks.
 
 Do **not** use this for tightly-coupled tasks that share mutable files — run those serially with
 `single-branch-development` instead.
@@ -41,7 +41,7 @@ Do **not** use this for tightly-coupled tasks that share mutable files — run t
 
 - `git` with worktree support; a remote configured for PRs (`gh` CLI authenticated for `gh pr create`).
 - Docker available if tracks run integration suites (Testcontainers).
-- A repo `track-manifest.md` resolved (see [Manifest contract](#manifest-contract)). If absent, generate one from the repo's tasks/dispatch doc and confirm with the user before proceeding.
+- A repo Parallel Tracks Orchestrator Manifest resolved (see [Manifest contract](#manifest-contract)). If absent, generate one from the repo's tasks/dispatch doc and confirm with the user before proceeding.
 - These skills installed and composable: `using-git-worktrees`, `dispatching-parallel-agents`, `single-branch-development`.
 - *(Optional but recommended)* `jq` available and Copilot [agent hooks](https://docs.github.com/en/copilot/concepts/agents/hooks) enabled, to make the gates mechanical rather than prompt-trusted (see [Deterministic enforcement via Copilot agent hooks](#deterministic-enforcement-via-copilot-agent-hooks)). Hooks may be disabled by enterprise policy — fall back to prompt-enforced gates if so.
 
@@ -62,14 +62,23 @@ Where a gate is a *mechanical* property (a path, a forbidden command, a counter)
 
 ## Manifest contract
 
-The skill reads a `track-manifest.md` providing, per repo:
+The skill reads a **Parallel Tracks Orchestrator Manifest** at `.github/tracks/manifest.md`
+providing project-wide orchestrator defaults — nothing specific to any individual track:
 
-- **tracks**: id → { branch name, worktree path, task IDs, migration/number range it owns }.
-- **ownership map**: shared files and who may touch them (append-only hotspots, frozen entrypoints).
-- **commands**: lint, unit test, integration test, e2e, dep-lock regen (e.g. `go mod tidy`, `uv lock`).
-- **isolation**: per-track Docker project-name / DB namespace convention.
-- **caps**: max concurrent tracks running integration suites on this host.
-- **invariants**: project release-blockers to assert in review (e.g. access-control deny-by-default).
+- **Orchestrator Defaults**: `default_branch`, `worktree_root`, `docker_namespace_pattern`,
+  `max_concurrent_tracks`, `runs_dir`, `notify_webhook`.
+- **Commands**: lint, unit test, integration test, e2e, dep-lock regen (e.g. `go mod tidy`, `uv lock`).
+- **Evidence pack**: `kind:pattern` pairs + `glob:kind` path→kind selector for diff-conditional gates.
+- **Frozen entrypoints**: files no track may edit without self-registration.
+- **Ownership map**: shared files and who may touch them.
+- **Invariants**: project release-blockers to assert in review.
+- **Hook environment**: env-var derivation table for all hooks.
+
+Per-track details (branch, worktree path, task IDs, owned paths) live in the **wave dispatch file**
+generated at Step 0, not in this manifest.
+
+Mechanical ceilings (`TRACK_MAX_TOOL_CALLS`, `MAX_TOKEN_ESTIMATE`) are set in
+`.github/hooks/track-env.base.sh` — not in the manifest.
 
 If a needed field is missing, ask the user once for that specific value; do not guess.
 
@@ -191,8 +200,8 @@ prompt instructions; a hook cannot tell which subagent reasoned about something,
 *right* suite ran.
 
 Resolve each worker's env **two-tier** before launch — **per-track** vars (`TRACK_ALLOWED_PREFIXES`,
-`RUN_ID`) from the track's `Tracks` row, **global** vars from the manifest
-Defaults/Commands/Hard-stops sections. Every value is **derived from a `track-manifest.md` field**
+`RUN_ID`) from the track's row in the **wave dispatch file**, **global** vars from the manifest
+Defaults/Commands sections. Every value is **derived from a manifest or wave dispatch field**
 (see its *Hook environment* table), not invented:
 ```bash
 # PER-TRACK (a DIFFERENT value in each worktree — export inside each worker's launch)
@@ -222,7 +231,7 @@ entirely. Layer them: hooks (fast, in-session) → git `pre-push` (local backsto
 
 **Before touching any branch**, read the requested stories/tasks and determine what can safely run in parallel and what must be sequenced.
 
-1. **Read the source**: if a `track-manifest.md` exists, use it. If absent, read `tasks.md` (or any dispatch/spec doc the user points to), extract the task set, infer the file-ownership surface per task, and draft a `track-manifest.md` — **do not silently invent one**; show it to the user.
+1. **Read the source**: if a Parallel Tracks Orchestrator Manifest (`.github/tracks/manifest.md`) exists, use it. If absent, read `tasks.md` (or any dispatch/spec doc the user points to), extract the task set, infer the file-ownership surface per task, and draft the manifest — **do not silently invent one**; show it to the user.
 
 2. **Detect dependencies and overlap**: for each pair of requested tasks, check:
    - Do they write overlapping file paths? (Overlap → must be sequential.)
@@ -251,7 +260,7 @@ entirely. Layer them: hooks (fast, in-session) → git `pre-push` (local backsto
 Run all checks; proceed silently if all pass, else stop and ask the human with the specific failure:
 
 - Working tree clean (`git status --porcelain` empty) and on the intended base branch.
-- `track-manifest.md` resolved and every requested track id exists in it.
+- Parallel Tracks Orchestrator Manifest resolved (`.github/tracks/manifest.md`) and a wave dispatch file with every requested track defined.
 - Requested tracks have **non-overlapping** file ownership and migration ranges (cross-check the ownership map). Overlap → STOP, report the collision (it would only become a merge conflict later anyway). Make this mechanical with the bundled [`scripts/track-precheck.sh`](scripts/track-precheck.sh): pipe it a JSON array of `{id, prefixes}` (each track's `TRACK_ALLOWED_PREFIXES`) and it exits non-zero with the exact colliding prefix pair — the same string-prefix rule the guard enforces, so the precheck asserts on precisely what the workers will run.
 - Docker/host headroom ≥ requested concurrent tracks vs. the manifest cap. Over cap → propose reducing concurrency.
 - `gh` authenticated; remote reachable. `runs/` exists and is git-ignored.
@@ -397,7 +406,7 @@ Start low; graduate only after weeks of clean runs.
 
 ## References
 
-- `track-manifest.template.md` (bundled) — copy into a repo and fill per project.
+- `track-manifest.template.md` (bundled) — copy into `.github/tracks/manifest.md` and fill per project.
 - [`scripts/track-precheck.sh`](scripts/track-precheck.sh) (bundled, parallel-only) — the mechanical Precheck overlap gate: reads a JSON array of `{id, prefixes}` on stdin, exits 0 when all tracks' ownership prefixes are mutually disjoint, or exit 2 with the exact colliding pair / config error (empty ownership, duplicate id). Run it in Step 1 before fan-out.
 - The Copilot agent-hook bundle is **owned by `single-branch-development`** ([`track-hooks.json`](../single-branch-development/templates/track-hooks.json) + [`scripts/track-*.sh`](../single-branch-development/scripts/)) and reused whole by every worker: `track-reconcile.sh` (SessionStart resume), `track-guard.sh` (PreToolUse ownership + push lockout), `track-evidence.sh` / `track-meter.sh` (PostToolUse evidence + tool-call ceiling), `track-trace.sh` (Subagent trace with per-spawn reason), `track-evidence-gate.sh` / `track-tokens.sh` / `track-sentinel.sh` / `track-notify.sh` (Stop: freshness gate, token estimate, secrets scan, webhook). Manual/CLI members: `track-preflight.sh` (mint/recover RUN_ID), `track-report.sh` (deterministic PR-body Auto block), `track-note.sh` (self-reported skill/loop trace). This orchestrator reuses the bundle and layers per-track/global env on top. See [`references/hooks.md`](../single-branch-development/references/hooks.md) for the full per-script contract.
 - [Copilot agent hooks (GitHub Docs)](https://docs.github.com/en/copilot/concepts/agents/hooks) · [Agent hooks in VS Code](https://code.visualstudio.com/docs/copilot/customization/hooks) · [Hooks reference (per-event I/O schema)](https://code.visualstudio.com/docs/agents/reference/hooks-reference) — events, JSON I/O, exit codes, Claude/CLI cross-compatibility.

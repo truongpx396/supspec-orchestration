@@ -686,34 +686,57 @@ printf '%s\n' \
   '{"type":"tool.execution_complete","data":{"toolCallId":"t1","success":true}}' \
   > "$TOK_TX"
 
-# With TRACK_TOKEN_ESTIMATE=1 it should write token_estimate to the record.
+# With MAX_TOKEN_ESTIMATE=200000 it should write token_estimate to the record.
 printf '{"hook_event_name":"Stop","transcript_path":"%s"}' "$TOK_TX" | \
-  TRACK_TOKEN_ESTIMATE=1 RUN_ID="$TOK_RID" RUNS_DIR="$TOK_RUNS" bash "$TOKENS" >/dev/null 2>&1 || true
+  MAX_TOKEN_ESTIMATE=200000 RUN_ID="$TOK_RID" RUNS_DIR="$TOK_RUNS" bash "$TOKENS" >/dev/null 2>&1 || true
 if jq -e '.token_estimate > 0 and (.token_estimate_method | test("chars")) and (.token_estimate_chars > 0)' \
      "$TOK_RUNS/$TOK_RID.json" >/dev/null 2>&1; then
-  pass "tokens: writes token_estimate + method with TRACK_TOKEN_ESTIMATE=1"
+  pass "tokens: writes token_estimate + method with MAX_TOKEN_ESTIMATE=200000"
 else
-  fail "tokens: writes token_estimate + method with TRACK_TOKEN_ESTIMATE=1"
+  fail "tokens: writes token_estimate + method with MAX_TOKEN_ESTIMATE=200000"
 fi
 
 # Overwrite behaviour: a second Stop call must OVERWRITE, not add, the estimate.
 est1="$(jq '.token_estimate' "$TOK_RUNS/$TOK_RID.json")"
 printf '{"hook_event_name":"Stop","transcript_path":"%s"}' "$TOK_TX" | \
-  TRACK_TOKEN_ESTIMATE=1 RUN_ID="$TOK_RID" RUNS_DIR="$TOK_RUNS" bash "$TOKENS" >/dev/null 2>&1 || true
+  MAX_TOKEN_ESTIMATE=200000 RUN_ID="$TOK_RID" RUNS_DIR="$TOK_RUNS" bash "$TOKENS" >/dev/null 2>&1 || true
 est2="$(jq '.token_estimate' "$TOK_RUNS/$TOK_RID.json")"
 [ "$est1" -eq "$est2" ] \
   && pass "tokens: repeated Stop overwrites estimate (not additive)" \
   || fail "tokens: repeated Stop overwrites estimate (not additive)"
 
-# No-op without TRACK_TOKEN_ESTIMATE (the field must not appear).
+# Ceiling enforcement: a very low ceiling should block the first stop (exit 1) and
+# set status=budget-exceeded, then allow the second stop (exit 0) once status is set.
+TOK_CEIL_RID="tok-ceil"
+jq -nc --arg rid "$TOK_CEIL_RID" '{"run_id":$rid,"v":1,"trace":[],"evidence":[],"tool_calls":5}' \
+  > "$TOK_RUNS/$TOK_CEIL_RID.json"
+budget_exit=0
+printf '{"hook_event_name":"Stop","transcript_path":"%s"}' "$TOK_TX" | \
+  MAX_TOKEN_ESTIMATE=1 RUN_ID="$TOK_CEIL_RID" RUNS_DIR="$TOK_RUNS" bash "$TOKENS" 2>/dev/null \
+  || budget_exit=$?
+if [ "$budget_exit" -ne 0 ] && jq -e '.status == "budget-exceeded"' "$TOK_RUNS/$TOK_CEIL_RID.json" >/dev/null 2>&1; then
+  pass "tokens: ceiling enforcement — first stop blocked + status=budget-exceeded written"
+else
+  fail "tokens: ceiling enforcement — first stop blocked + status=budget-exceeded written (exit=$budget_exit)"
+fi
+# Second stop with status already set must exit 0 (allow clean run end).
+budget_exit2=0
+printf '{"hook_event_name":"Stop","transcript_path":"%s"}' "$TOK_TX" | \
+  MAX_TOKEN_ESTIMATE=1 RUN_ID="$TOK_CEIL_RID" RUNS_DIR="$TOK_RUNS" bash "$TOKENS" 2>/dev/null \
+  || budget_exit2=$?
+[ "$budget_exit2" -eq 0 ] \
+  && pass "tokens: ceiling enforcement — second stop allowed (status already budget-exceeded)" \
+  || fail "tokens: ceiling enforcement — second stop allowed (budget_exit2=$budget_exit2)"
+
+# No-op when MAX_TOKEN_ESTIMATE=0 (the field must not appear).
 jq -nc '{"run_id":"tok-off","v":1,"trace":[],"evidence":[],"tool_calls":0}' \
   > "$TOK_RUNS/tok-off.json"
 printf '{"hook_event_name":"Stop","transcript_path":"%s"}' "$TOK_TX" | \
-  TRACK_TOKEN_ESTIMATE="" RUN_ID="tok-off" RUNS_DIR="$TOK_RUNS" bash "$TOKENS" >/dev/null 2>&1 || true
+  MAX_TOKEN_ESTIMATE=0 RUN_ID="tok-off" RUNS_DIR="$TOK_RUNS" bash "$TOKENS" >/dev/null 2>&1 || true
 if jq -e '.token_estimate == null' "$TOK_RUNS/tok-off.json" >/dev/null 2>&1; then
-  pass "tokens: no-op without TRACK_TOKEN_ESTIMATE"
+  pass "tokens: no-op when MAX_TOKEN_ESTIMATE=0"
 else
-  fail "tokens: no-op without TRACK_TOKEN_ESTIMATE"
+  fail "tokens: no-op when MAX_TOKEN_ESTIMATE=0"
 fi
 
 rm -rf "$TOK_RUNS" "$TOK_TX"

@@ -20,40 +20,31 @@ Built on **[SpecKit](https://github.com/github/spec-kit)** (spec → plan → ta
 
 ## Table of Contents
 
-- [Where these skills fit in the pipeline](#️-where-these-skills-fit-in-the-full-pipeline)
-- [Prerequisites](#-prerequisites)
-- [Main flows](#-main-flows)
-- [The three skills](#️-the-three-skills)
-- [Anatomy of a skill](#-anatomy-of-a-skill)
-- [The hooks bundle](#️-the-hooks-bundle)
-- [Evidence](#-evidence)
-- [Run artifacts](#-run-artifacts-run-record--pr-body)
-- [Tracing and observability](#-tracing-and-observability)
-- [Repository layout](#-repository-layout)
-- [Getting started](#-getting-started)
-- [Design principles](#-design-principles)
-- [Key files](#-key-files)
+- [🗺️ Where these skills fit in the pipeline](#️-where-these-skills-fit-in-the-full-pipeline)
+- [📋 Prerequisites](#-prerequisites)
+- [🔤 Concepts: Track and Wave](#-concepts-track-and-wave)
+- [🔄 Main flows](#-main-flows)
+- [🛠️ The three skills](#️-the-three-skills)
+- [🧬 Anatomy of a skill](#-anatomy-of-a-skill)
+- [⚙️ The hooks bundle](#️-the-hooks-bundle)
+- [📸 Evidence](#-evidence)
+- [📦 Run artifacts](#-run-artifacts-run-record--pr-body)
+- [🔍 Tracing and observability](#-tracing-and-observability)
+- [📂 Repository layout](#-repository-layout)
+- [🚀 Getting started](#-getting-started)
+- [🧠 Design principles](#-design-principles)
+- [🔗 Key files](#-key-files)
 - [License](#license)
 
 ---
 
 ## 🗺️ Where these skills fit in the full pipeline
 
-```
-┌─────────────── SpecKit (upstream) ─────────────────┐
-│  speckit.specify → speckit.clarify → speckit.plan   │
-│  → speckit.tasks → speckit.analyze                  │
-└──────────────────────────┬─────────────────────────┘
-                           │  tasks.md
-                           ▼
-┌──────── supspec-orchestration (this repo) ──────────┐
-│  single-branch-development   (one branch / track)   │
-│  executing-parallel-tracks   (N tracks, conductor)  │
-│  pr-review-feedback          (rework existing PR)   │
-└──────────────────────────┬─────────────────────────┘
-                           │  draft PR(s) + evidence
-                           ▼
-              human reviews → merge queue
+```mermaid
+graph TD
+  A["🗂️ SpecKit (upstream)<br/>speckit.specify → speckit.clarify → speckit.plan<br/>→ speckit.tasks → speckit.analyze"] -->|tasks.md| B
+  B["🔀 supspec-orchestration (this repo)<br/>single-branch-development  (one branch / track)<br/>executing-parallel-tracks  (N tracks, conductor)<br/>pr-review-feedback         (rework existing PR)"] -->|draft PR(s) + evidence| C
+  C["👤 human reviews → merge queue"]
 ```
 
 ---
@@ -64,10 +55,28 @@ Before using these skills in your repo:
 
 1. **[SpecKit](https://github.com/github/spec-kit)** installed and a `tasks.md` generated (or equivalent task list).
 2. **[Superpowers](https://github.com/obra/superpowers)** skills catalog installed and discoverable under `.github/skills/`.
-3. A `track-manifest.md` for parallel tracks (or let `executing-parallel-tracks` derive one from `tasks.md` and confirm with you at Step 0).
+3. A Parallel Tracks Orchestrator Manifest at `.github/tracks/manifest.md` for parallel tracks (or let `executing-parallel-tracks` derive one from `tasks.md` and confirm with you at Step 0).
 4. `git` with worktree support; `gh` CLI authenticated; `jq` available.
 5. Docker available if any track runs integration suites.
 6. Copilot [agent hooks](https://docs.github.com/en/copilot/concepts/agents/hooks) enabled in your workspace (optional but recommended — makes scope/evidence gates mechanical rather than prompt-trusted).
+
+---
+
+## 🔤 Concepts: Track and Wave
+
+**Track** — a group of related tasks executed as a unit on one isolated branch/worktree, corresponding to one user story or feature slice. A track has an owner (its worker agent), a defined file-ownership scope, and produces exactly one draft PR.
+
+**Wave** — a group of tracks that can run in parallel because they have non-overlapping file ownership and no inter-dependencies. Waves are sequential: Wave 2 starts only after Wave 1's PRs are merged. Within a wave, all tracks run concurrently.
+
+```
+Wave 1: [Track A]  [Track B]  [Track C]   ← all parallel, disjoint ownership
+           ↓           ↓           ↓
+        PR-A        PR-B        PR-C
+           ↓ merge queue ↓
+Wave 2: [Track D]  [Track E]             ← parallel, depend on Wave 1
+```
+
+This is why Step 0 of `executing-parallel-tracks` analyzes dependencies and groups tasks into waves before fanning out any workers.
 
 ---
 
@@ -79,7 +88,7 @@ Step 1: track-preflight.sh --persist  🎫 mint RUN_ID, confirm scope
 Step 2: using-git-worktrees           🌿 isolate on a branch
 Step 3: dispatching-parallel-agents   🤖 parallel scaffold batches (no TDD)
 Step 4: requesting-code-review        🔎 self-review quality + governance
-Step 5: track-evidence-gate.sh        🚦 evidence gate (fingerprint match)
+Step 5: verification-before-completion 🚦 evidence gate (fingerprint match)
 Step 8: gh pr create --draft          📬 stop here — human reviews
 ```
 
@@ -175,28 +184,26 @@ Deep-dive docs (scaffold/story/refactor modes, hooks reference) live under `refe
 
 The skills are only as strong as the worker's compliance — unless the gates are **mechanical**. Copilot [agent hooks](https://docs.github.com/en/copilot/concepts/agents/hooks) run shell commands at lifecycle points (`PreToolUse`, `PostToolUse`, `SubagentStart/Stop`, `Stop`, …) and can block a tool call before it happens. Each script **no-ops unless its env is set**, so dropping the bundle in is safe before configuring anything.
 
-| Script | 🔗 Event | Scope | What it enforces / records |
-|---|---|---|---|
-| `track-preflight.sh` | manual (Step 1) | per-track | 🎫 Mint or recover stable `RUN_ID`; check prerequisites; persist resume breadcrumb |
-| `track-guard.sh` | `PreToolUse` | repo-policy | 🛡️ Deny edits outside writable scope, frozen paths, artifacts, or destructive ops |
-| `track-evidence.sh` | `PostToolUse` | per-track | 📸 Capture test output + code fingerprint — what the tool saw, not a model claim |
-| `track-evidence-gate.sh` | `Stop` | repo-policy | 🚦 Block stop unless evidence is present, **fresh** (fingerprint matches tree), and passing |
-| `track-meter.sh` | `PostToolUse` | repo-policy | 🔢 Count tool calls + heartbeat; hard-stop at `TRACK_MAX_TOOL_CALLS` |
-| `track-trace.sh` | `SubagentStart/Stop` | per-track | 🔍 Record **why** each subagent was spawned (`agent_description`) + stop reason |
-| `track-tokens.sh` | `Stop` | repo-policy | 🪙 Estimate token usage from transcript (chars÷4; clearly labelled as estimate) |
-| `track-note.sh` | manual | per-track | 📝 Self-report ordered skill activations + loop counts (model-claim provenance tag) |
-| `track-sentinel.sh` | `Stop` | repo-policy | 🔒 Scan staged diff for likely secrets / debug leftovers before handoff |
-| `track-notify.sh` | `Stop` | repo-policy | 📣 Best-effort completion webhook |
-| `track-reconcile.sh` | `SessionStart` | per-track | ♻️ Recover state from committed history + run record; stash untrusted work |
-| `track-report.sh` | manual (Step 8) | per-track | 📄 Render deterministic PR-body Auto block (diff, evidence, tool calls, trace) |
-| `install-hooks.sh` | manual | repo-wide | 📦 Idempotent, consent-gated, drift-aware installer for the whole bundle |
+| Script | 🔗 Trigger Event | Scope | Purpose | What it enforces / records |
+|---|---|---|---|---|
+| `track-preflight.sh` | manual (Step 1) | per-track | **Lifecycle** | 🎫 Mint or recover stable `RUN_ID`; check prerequisites; persist resume breadcrumb |
+| `track-guard.sh` | `PreToolUse` | repo-policy | **Scope & guard** | 🛡️ Deny edits outside writable scope, frozen paths, artifacts, or destructive ops |
+| `track-evidence.sh` | `PostToolUse` | per-track | **Evidence & quality** | 📸 Capture test output + code fingerprint — what the tool saw, not a model claim |
+| `track-evidence-gate.sh` | `Stop` | repo-policy | **Evidence & quality** | 🚦 Block stop unless evidence is present, **fresh** (fingerprint matches tree), and passing |
+| `track-meter.sh` | `PostToolUse` | repo-policy | **Governance** | 🔢 Count tool calls + heartbeat; hard-stop at `TRACK_MAX_TOOL_CALLS` |
+| `track-trace.sh` | `SubagentStart/Stop` | per-track | **Observability** | 🔍 Record **why** each subagent was spawned (`agent_description`) + stop reason |
+| `track-tokens.sh` | `Stop` | repo-policy | **Governance** | 🪙 Estimate token usage; enforce `MAX_TOKEN_ESTIMATE` ceiling (blocks stop + writes `status=budget-exceeded`) |
+| `track-note.sh` | manual | per-track | **Observability** | 📝 Self-report ordered skill activations + loop counts (model-claim provenance tag) |
+| `track-sentinel.sh` | `Stop` | repo-policy | **Scope & guard** | 🔒 Scan staged diff for likely secrets / debug leftovers before handoff |
+| `track-notify.sh` | `Stop` | repo-policy | **Lifecycle** | 📣 Best-effort completion webhook |
+| `track-reconcile.sh` | `SessionStart` | per-track | **Lifecycle** | ♻️ Recover state from committed history + run record; stash untrusted work |
+| `track-report.sh` | manual (Step 8) | per-track | **Observability** | 📄 Render deterministic PR-body Auto block (diff, evidence, tool calls, trace) |
+| `install-hooks.sh` | manual | repo-wide | **Lifecycle** | 📦 Idempotent, consent-gated, drift-aware installer for the whole bundle |
 
 **Scope column:**
 - **repo-policy** — set once in `track-env.base.sh` (committed, same value for every track)
 - **per-track** — derived from the task set; different value per worktree
 - **repo-wide** — runs once during setup, not per-run
-
-**Token / $ budgets are orchestrator-side, not hook-enforced.** Hooks receive no token or cost data from the Copilot API, so `TRACK_TOKEN_ESTIMATE` is a measurement toggle (records a chars÷4 estimate), not a kill switch. The only hook-enforceable ceiling is `TRACK_MAX_TOOL_CALLS`. Set $ budgets in the model/orchestrator settings where they can actually halt a run.
 
 Everything a run records lands in `runs/<RUN_ID>.json` (gitignored). Full documentation: **[references/hooks.md](.github/skills/single-branch-development/references/hooks.md)**.
 
@@ -314,7 +321,7 @@ Grep any one surface → reconstruct the whole run. `runs/summary.md` aggregates
       SKILL.md
       scripts/                        # track-precheck.sh
       tests/
-      track-manifest.template.md      # copy per repo; fill in task/ownership facts
+      track-manifest.template.md      # copy to .github/tracks/manifest.md per repo; fill in orchestrator facts
     pr-review-feedback/
       SKILL.md
 README.md
@@ -367,9 +374,24 @@ Key env vars (set in `track-env.base.sh` unless noted):
 | Variable | Default | Purpose |
 |---|---|---|
 | `TRACK_EVIDENCE_KINDS` | `go-test:…;py:…;ts:…` | `label:command` pack — what commands produce evidence |
-| `TRACK_EVIDENCE_RULES` | path-glob:kind pairs | Auto-require evidence kinds based on which files changed |
+| `TRACK_EVIDENCE_RULES` | see table below | Auto-require evidence kinds based on which files changed |
 | `TRACK_REQUIRED_EVIDENCE` | `""` *(task-derived)* | Extra kinds required on every diff regardless of rules |
 | `TRACK_BASE_REF` | `origin/main` | Base ref for the diff — wrong value silently passes an empty diff |
+
+`TRACK_EVIDENCE_RULES` is a `;`-separated list of `path-glob:kind` pairs. The gate resolves which kinds are required by matching changed files against these globs:
+
+| path glob | kind |
+|---|---|
+| `*.go` | `go-test` |
+| `*.py` | `py` |
+| `*.ts` | `ts` |
+| `*.tsx` | `ts` |
+| `migrations/*` | `pg-explain` |
+| `*/queries/*.sql` | `pg-explain` |
+| `*/events/*` | `nats` |
+| `*/cache/*` | `redis` |
+
+Example value: `*.go:go-test;*.py:py;*.tsx:ts;*.ts:ts;migrations/*:pg-explain`
 
 **Run lifecycle** *(mix of repo-policy and per-track)*
 
@@ -378,7 +400,7 @@ Key env vars (set in `track-env.base.sh` unless noted):
 | `RUN_ID` | minted by preflight | Stable identifier threading branch ↔ PR ↔ commit trailer ↔ run record |
 | `RUNS_DIR` | `runs` | Directory for run records — must be gitignored |
 | `TRACK_MAX_TOOL_CALLS` | `200` | Hard ceiling on tool calls; run halts when reached |
-| `TRACK_TOKEN_ESTIMATE` | `1` | Toggle: estimate token usage at Stop (chars÷4 heuristic). NOT a kill-switch — see hooks bundle note above. |
+| `MAX_TOKEN_ESTIMATE` | `200000` | Token-estimate ceiling; blocks stop + writes `status=budget-exceeded` when exceeded. Set to `0` to disable. |
 | `TRACK_SENTINEL` | `1` | Scan staged diff for likely secrets/debug leftovers at Stop |
 | `TRACK_NOTIFY_WEBHOOK` | `""` | URL for best-effort completion webhook; empty = no notify |
 | `PREFLIGHT_REQUIRE_GH` | `1` | Require authenticated `gh` CLI at preflight (set `0` on bootstraps without a remote) |
@@ -401,24 +423,19 @@ bash .github/skills/executing-parallel-tracks/tests/test-skill.sh
 ```
 
 The test harnesses are a **documentation-contract fence + functional regression suite** in one:
-- **121 SBD tests** cover: preflight flag behavior (`--persist`, `--complete`, breadcrumb stamping), guard allow/deny decisions (scope, frozen paths, destructive ops, FF-push gating), evidence capture + gate (fingerprint freshness, stale detection, multi-kind), meter counting + hard-stop, trace schema, sentinel pattern matching, report Auto-block rendering, run-record field completeness, and structural checks on SKILL.md / hooks.md / templates.
-- **195 EPT tests** cover: SKILL.md structural integrity (Steps 0–7, gates, wave planner), manifest template completeness, run-record schema (trace[]/ skills[] separation), precheck ownership-overlap detection (disjoint / overlapping / shared-prefix / boundary / migration-range cases), and the full test suite from SBD re-run against the EPT context.
-
-A passing run means the published docs and the scripts are consistent — no dead references, no missing fields.
+- **122 SBD tests** cover: preflight flag behavior (`--persist`, `--complete`, breadcrumb stamping), guard allow/deny decisions (scope, frozen paths, destructive ops, FF-push gating), evidence capture + gate (fingerprint freshness, stale detection, multi-kind), meter counting + hard-stop, trace schema, sentinel pattern matching, report Auto-block rendering, run-record field completeness, token ceiling enforcement, and structural checks on SKILL.md / hooks.md / templates.
+- **195 EPT tests** cover: SKILL.md structural integrity (Steps 0–7, gates, wave planner), manifest template completeness, run-record schema (trace[]/ skills[] separation), precheck ownership-overlap detection (disjoint / overlapping / shared hotspot / 3-way), and structural governance assertions.
 
 ---
 
 ## 🧠 Design principles
 
-| Principle | Meaning |
-|---|---|
-| 📸 **Evidence before assertions** | A run cannot *claim* done — the evidence gate reads fingerprinted test output |
-| 🛡️ **Fail-secure gates** | Scope, frozen paths, and destructive ops denied by default; you opt into looser behavior explicitly |
-| 🚫 **No self-merge** | Every worker stops at a draft PR — integration is a human/merge-queue decision |
-| 🧵 **Independently traceable** | One `RUN_ID` threads branch ↔ PR ↔ commit trailer ↔ run record |
-| ♻️ **Self-recovering** | State lives in committed history + `runs/<RUN_ID>.json`, not model memory |
-| 🔩 **Mechanical where possible** | Hooks enforce paths/commands/counters; judgement gates stay as instructions |
-| 🌊 **Wave-aware parallelism** | Tasks are analyzed for dependencies first; fan-out only after human confirms the wave plan |
+1. **Mechanical over prompt-trusted.** If a gate can be enforced by a hook, it is. The model complying is secondary.
+2. **Hooks are no-ops until configured.** Drop the bundle in any repo — nothing changes until you set env vars.
+3. **Evidence is fingerprinted, not narrated.** The gate checks the tree hash, not the agent's summary.
+4. **No self-merge.** Every pipeline terminates at a draft PR. A human decides what merges.
+5. **Observable by RUN_ID.** One stable ID threads branch, PR, commit, and run record. Grep any surface, reconstruct the whole run.
+6. **Confirm before fan-out.** Step 0 requires explicit human sign-off on the wave plan before spawning any worker. A bad plan is infinitely cheaper to fix before workers are running than after.
 
 ---
 
@@ -426,18 +443,16 @@ A passing run means the published docs and the scripts are consistent — no dea
 
 | File | Purpose |
 |---|---|
-| [`.github/skills/single-branch-development/SKILL.md`](https://github.com/truongpx396/supspec-orchestration/blob/main/.github/skills/single-branch-development/SKILL.md) | Per-branch worker — full pipeline spec, skill-per-step map, all three modes |
-| [`.github/skills/executing-parallel-tracks/SKILL.md`](https://github.com/truongpx396/supspec-orchestration/blob/main/.github/skills/executing-parallel-tracks/SKILL.md) | Parallel-tracks conductor — wave planner, fan-out, isolation, integration sequencing |
-| [`.github/skills/pr-review-feedback/SKILL.md`](https://github.com/truongpx396/supspec-orchestration/blob/main/.github/skills/pr-review-feedback/SKILL.md) | PR rework stage — triage, fix, re-evidence, PR update |
-| [`.github/skills/single-branch-development/references/hooks.md`](https://github.com/truongpx396/supspec-orchestration/blob/main/.github/skills/single-branch-development/references/hooks.md) | Hooks bundle reference — every script, every env var, run-record schema |
-| [`.github/skills/executing-parallel-tracks/track-manifest.template.md`](https://github.com/truongpx396/supspec-orchestration/blob/main/.github/skills/executing-parallel-tracks/track-manifest.template.md) | Track manifest template — copy into your repo, fill in task/ownership facts |
-| [`.github/instructions/security-and-owasp.instructions.md`](https://github.com/truongpx396/supspec-orchestration/blob/main/.github/instructions/security-and-owasp.instructions.md) | Security governance — applied at every trust-boundary review |
-| [`.github/instructions/code-review-generic.instructions.md`](https://github.com/truongpx396/supspec-orchestration/blob/main/.github/instructions/code-review-generic.instructions.md) | Generic review rubric — applied to all reviews |
-| [`.github/hooks/track-env.base.sh`](https://github.com/truongpx396/supspec-orchestration/blob/main/.github/hooks/track-env.base.sh) | Committed repo-wide config — all env vars with defaults and comments |
-| [`.github/hooks/track-hooks.json`](https://github.com/truongpx396/supspec-orchestration/blob/main/.github/hooks/track-hooks.json) | Hook wiring — event → script mapping |
+| `.github/skills/single-branch-development/SKILL.md` | SBD skill — full pipeline |
+| `.github/skills/executing-parallel-tracks/SKILL.md` | EPT skill — conductor |
+| `.github/skills/pr-review-feedback/SKILL.md` | PRF skill — rework stage |
+| `.github/skills/single-branch-development/references/hooks.md` | Hook env vars + run-record schema |
+| `.github/hooks/track-env.base.sh` | Committed repo-wide config (edit this) |
+| `.github/hooks/track-hooks.json` | Event → script wiring |
+| `.github/skills/executing-parallel-tracks/track-manifest.template.md` | Orchestrator manifest template (copy to `.github/tracks/manifest.md`) |
 
 ---
 
 ## License
 
-MIT — see [LICENSE](LICENSE). These skills are provided as-is for orchestrating Copilot agent workflows.
+MIT
