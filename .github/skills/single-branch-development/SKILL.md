@@ -194,12 +194,12 @@ whether a *skill* runs in your own session or a *subagent* is dispatched:**
 | 2 Reconcile | `track-reconcile.sh` | ⚙️ script |
 | 3 Isolate | `using-git-worktrees` | 🧩 skill |
 | 4 Core — **story** RED author | `dispatching-parallel-agents` → **N× maker** subagents (each carries the governance brief) | 🧩 skill → 🤖 subagents |
-| 4 Core — **story** RED review + freeze | `requesting-code-review` + governance (constitution + matched `.github/instructions/*`) + `security-and-owasp` | 🧩 skill |
+| 4 Core — **story** RED review + freeze | `requesting-code-review` (applies `code-review-generic.instructions.md` + all matched `.github/instructions/*` + constitution; adds `security-and-owasp` on trust boundaries) | 🧩 skill |
 | 4 Core — **story** incremental green | `subagent-driven-development` → per-task **maker** + **reviewer** subagents (wraps `test-driven-development`, `requesting-code-review`) | 🧩 skill → 🤖 subagents |
 | 4 Core — **refactor** pin-green + characterize | `dispatching-parallel-agents` → **N× maker** subagents (+ governance brief) then `requesting-code-review` | 🧩 skill → 🤖 subagents |
 | 4 Core — **refactor** incremental transform (keep green) | `subagent-driven-development` → **maker** + **reviewer** subagents (+ governance + `security-and-owasp` on trust boundaries) | 🧩 skill → 🤖 subagents |
 | 4 Core — **scaffold** generate | `dispatching-parallel-agents` → **N× maker** subagents (each carries the governance brief) | 🧩 skill → 🤖 subagents |
-| 4 Core — **scaffold** review | `requesting-code-review` + governance (constitution — hard gate; matched `.github/instructions/*`; no security add-on — guard cleared trust boundaries) | 🧩 skill |
+| 4 Core — **scaffold** review | `requesting-code-review` (applies `code-review-generic.instructions.md` + all matched `.github/instructions/*` + constitution; no security add-on — guard cleared trust boundaries) | 🧩 skill |
 | 5–6 Converge & gate | `verification-before-completion` | 🧩 skill |
 | 8 Finish | draft PR — **overrides** `finishing-a-development-branch` | 🧩 skill (overridden) |
 
@@ -361,9 +361,10 @@ disjointness for parallel-generation latency:
 3. **Apply** all bodies at once (controller = single writer) → one converged tree.
 4. **One `verification-before-completion` capture** — build + lint + bring-up health check; paste
    output. This proves the scaffold *works*.
-5. **One `requesting-code-review`** over the whole diff (quality + governance: constitution hard
-   gate + matched `.github/instructions/*`; no security add-on — the guard cleared trust
-   boundaries), then the same **draft-PR finish**.
+5. **One `requesting-code-review`** over the whole diff — the reviewer subagent applies
+   `code-review-generic.instructions.md` (always, `applyTo: '**'`) plus all matched
+   `.github/instructions/*` (language/framework-specific) plus the constitution (hard gate);
+   no `security-and-owasp` add-on — the guard cleared trust boundaries. Then the same **draft-PR finish**.
 
 Steps 4 and 5 are orthogonal and both mandatory: verification proves it *works*, review proves it is
 *correct*. TDD and two-stage review are dropped only because the guard proved the batch is
@@ -385,9 +386,10 @@ implementing task are distinct IDs in different files/runtimes.
    lone behavioral task runs here as **N=1**. Only pure non-behavioral bootstrap routes away → scaffold.
 2. **RED batch** (`dispatching-parallel-agents`) — fan out generation of the `### Tests` group, apply
    serially, **run**, and assert the whole group fails for the right reason (real red, not a typo).
-3. **RED review + freeze** (`requesting-code-review` **+** `security-and-owasp`) — review the failing
-   suite, then **freeze** it: green may add production code only. Greening by weakening a test is
-   forbidden.
+3. **RED review + freeze** (`requesting-code-review` **+** `security-and-owasp`) — the reviewer
+   subagent applies `code-review-generic.instructions.md` (always) + matched `.github/instructions/*`
+   + constitution + `security-and-owasp`. Review the failing suite, then **freeze** it: green may
+   add production code only. Greening by weakening a test is forbidden.
 4. **Incremental green** (`subagent-driven-development`) — implement the `### Implementation` group in
    dependency order; each task/cluster flips an identifiable subset green, with per-increment
    stage-1/stage-2 (+ security) review. Not big-bang — a story-long red period discards TDD's feedback
