@@ -96,6 +96,14 @@ The **only** configuration difference from a fresh build:
 See [`../single-branch-development/references/hooks.md`](../single-branch-development/references/hooks.md)
 for the full bundle, env reference, and what the run record captures.
 
+## Quality Gates (Owned Here)
+
+- **Triage before implementing**: `receiving-code-review` classifies each comment as accept / reject / clarify — a wrong or unclear suggestion gets a reasoned pushback, not a reflexive change.
+- **Behavioral fixes require TDD**: add a failing test that encodes the reviewer's concern first, then green it. A regression fix uses `systematic-debugging` → failing-repro-test → green.
+- **Re-evidence required after any fix**: a review fix invalidates the prior fingerprint. Re-run every required evidence kind (Step 5) against the new post-fix tree — not just the lane you touched.
+- **Never weaken a test to green CI**: no `skip`, no loosened assertion, no deleted case. A genuinely wrong test routes back through the review gate.
+- **`TRACK_BASE_REF` must point to the PR base**: so the diff-conditional gate selects the right evidence kinds for the rework diff, not an empty diff-vs-HEAD.
+
 ## Gotchas
 
 - **Don't blindly implement review comments.** `receiving-code-review` exists precisely so a wrong or

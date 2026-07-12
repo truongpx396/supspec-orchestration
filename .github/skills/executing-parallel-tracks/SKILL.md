@@ -216,7 +216,7 @@ entirely. Layer them: hooks (fast, in-session) → git `pre-push` (local backsto
 **GitHub Actions (the unbypassable merge gate)**. CI stays the authority, exactly as the
 [autonomy boundary](#autonomy-boundary-read-first) states.
 
-## Step-by-Step Workflow
+## Pipeline (N Tracks)
 
 ### 1. Precheck gate (ask-back only on failure)
 
@@ -306,6 +306,30 @@ Aggregate every `runs/<run-id>.json` into `runs/summary.md`. Per track report: t
 (success / blocked / no-progress / budget-exceeded), evidence pointer, draft-PR URL, iterations, and
 cost. Do not claim success without the evidence having been produced. Blocked/exhausted runs are
 reported as such — never dressed up as done.
+
+## Skill-Per-Step Map
+
+Kind legend: 🧩 **skill** = runs in-session (reads a SKILL.md); 🤖 **subagent** = dispatched agent with isolated context, maker or reviewer role; ⚙️ **script** = bundled hook/CLI, mechanical, no LLM.
+
+| Step | Fires | Kind |
+|------|-------|------|
+| 1 Precheck | `track-precheck.sh` (ownership overlap gate) | ⚙️ script |
+| 2 Isolate (one per track) | `using-git-worktrees` | 🧩 skill |
+| 3 Fan out (one worker per track) | `dispatching-parallel-agents` → N× **worker** subagents, each running `single-branch-development` | 🧩 skill → 🤖 subagents |
+| 4 Per-track draft PR | `track-report.sh` builds Auto block → `gh pr create --draft` | ⚙️ script |
+| 5 Integration (merge gate) | CI + human / merge queue — **not the worker** | (CI/human) |
+| 6 Stale-PR bounce | re-dispatch to owning worker subagent | 🤖 subagent |
+| 7 Report | `track-report.sh` → `runs/summary.md` aggregation | ⚙️ script |
+
+## Quality Gates (Owned Here)
+
+Four gates are mandatory — every track must pass all four before a PR counts as `success`:
+
+- **Precheck gate**: non-overlapping ownership, clean tree, manifest complete, Docker headroom within cap — all must pass before fan-out. Ask-back only on failure; proceed silently when clean.
+- **Verifier gate (maker/checker split)**: a **distinct adversarial subagent** verifies each worker's output. A failed verifier writes `status: blocked` to the run record and opens **no PR** — it never quietly skips or adjusts to pass.
+- **Merge gate**: workers stop at draft PR; **GitHub Actions CI is the mechanical gate**; merging is never the worker's job. Climb the [maturity ladder](#maturity-ladder-dont-start-at-the-top) deliberately — don't skip rungs.
+- **Hard stops (all five enforced)**: iteration cap, no-progress detector, idle/heartbeat staleness (`now − last_ts`), per-worker budget ceiling, and global fleet budget ceiling. A worker that trips any of these halts and writes its terminal state to the run record.
+- **Evidence gate**: `success` requires pasted output. A `success` claim without evidence in the run record is `NEEDS_CONTEXT`, not `success`.
 
 ## Maturity ladder (don't start at the top)
 
