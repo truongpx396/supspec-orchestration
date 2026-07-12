@@ -196,7 +196,7 @@ The skills are only as strong as the worker's compliance — unless the gates ar
 
 Scripts are listed in the order they typically fire across a track's lifetime:
 
-| Script | 🔗 Trigger Event | Purpose | What it enforces / records |
+| Script | 🔗 Trigger Event | Type / Kind | What it enforces / records |
 |---|---|---|---|
 | `install-hooks.sh` *(repo-wide)* | manual | **Lifecycle** | 📦 Idempotent, consent-gated, drift-aware installer for the whole bundle |
 | `track-preflight.sh` *(per-track)* | manual (Step 1) | **Lifecycle** | 🎫 Mint or recover stable `RUN_ID`; check prerequisites; persist resume breadcrumb |
@@ -428,10 +428,10 @@ Example value: `*.go:go-test;*.py:py;*.tsx:ts;*.ts:ts;migrations/*:pg-explain`
 ### 3️⃣ Invoke a skill
 Point Copilot at the task and let the skill drive:
 
-- *"bootstrap a new project foundation"* → Flow 1
-- *"implement this story using single-branch-development"* → Flow 2
-- *"refactor this module using single-branch-development"* → Flow 3
-- *"run tracks 1, 2, 3 in parallel using executing-parallel-tracks"* → Flow 4
+- *"scaffold the project foundation (tasks T001–T005)"* → Flow 1
+- *"implement user story T012 using single-branch-development"* → Flow 2
+- *"refactor the auth module (task T031) using single-branch-development"* → Flow 3
+- *"execute user stories T020, T021, T022 in parallel using executing-parallel-tracks"* → Flow 4
 
 The worker stops at `gh pr create --draft`. **A human owns the merge.**
 
