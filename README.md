@@ -91,6 +91,7 @@ This is why Step 0 of `executing-parallel-tracks` analyzes dependencies and grou
 ## 🔄 Main flows
 
 ### Flow 1 — Scaffold (non-behavioral bootstrap)
+> **Skill:** `single-branch-development` in **scaffold mode**
 ```
 Step 1: track-preflight.sh --persist  🎫 mint RUN_ID, confirm scope
 Step 2: using-git-worktrees           🌿 isolate on a branch
@@ -101,6 +102,7 @@ Step 8: gh pr create --draft          📬 stop here — human reviews
 ```
 
 ### Flow 2 — Single feature/bugfix (story mode, TDD)
+> **Skill:** `single-branch-development` in **story mode** (N=1 for a single task/bugfix)
 ```
 Step 1: track-preflight.sh --persist  🎫 mint RUN_ID, confirm scope
 Step 2: using-git-worktrees           🌿 isolate on a branch
@@ -113,6 +115,7 @@ Step 8: gh pr create --draft          📬 stop here — human reviews
 ```
 
 ### Flow 3 — Refactor (behavior-preserving, keep-green)
+> **Skill:** `single-branch-development` in **refactor mode**
 ```
 Step 1: track-preflight.sh --persist  🎫 mint RUN_ID, confirm scope
 Step 2: using-git-worktrees           🌿 isolate on a branch
@@ -125,14 +128,17 @@ Step 8: gh pr create --draft          📬 stop here — human reviews
 ```
 
 ### Flow 4 — Parallel tracks (N stories at once)
+> **Skill:** `executing-parallel-tracks` — composes `dispatching-parallel-agents` + N× `single-branch-development`
 ```
 Step 0: Analyze & plan waves          📊 derive dependencies, wave plan, CONFIRM
-Step 1: track-precheck.sh             🔎 validate manifest + ownership overlap
+Step 1: track-wave-preflight.sh       🌊 mint WAVE_ID + per-track RUN_IDs, persist wave dispatch
+        track-precheck.sh             🔎 validate manifest + ownership overlap
 Step 2: using-git-worktrees (×N)      🌿 one isolated worktree per track
 Step 3: dispatching-parallel-agents   🪢 fan out N worker agents
   Each agent runs single-branch-development  🔄 full pipeline per track
-Step N+1: observe run records         📊 triage by RUN_ID
+Step N+1: observe run records         📊 triage by RUN_ID (wave prefix → all tracks visible)
 Step N+2: integration sequencing      🔀 PRs ordered by dependency
+Step 7:   track-wave-preflight.sh --complete  🏁 close wave dispatch (final_status)
        ↓
 human reviews N draft PRs → merge queue
 ```
@@ -198,19 +204,20 @@ Scripts are listed in the order they typically fire across a track's lifetime:
 
 | Script | 🔗 Trigger Event | Type / Kind | What it enforces / records |
 |---|---|---|---|
-| `install-hooks.sh` *(repo-wide)* | manual | **Lifecycle** | 📦 Idempotent, consent-gated, drift-aware installer for the whole bundle |
-| `track-preflight.sh` *(per-track)* | manual (Step 1) | **Lifecycle** | 🎫 Mint or recover stable `RUN_ID`; check prerequisites; persist resume breadcrumb |
+| `install-hooks.sh` *(repo-wide)* | skill-invoked (setup) | **Lifecycle** | 📦 Idempotent, consent-gated, drift-aware installer for the whole bundle |
+| `track-preflight.sh` *(per-track)* | skill-invoked (Step 1) | **Lifecycle** | 🎫 Mint or recover stable `RUN_ID`; check prerequisites; persist resume breadcrumb |
 | `track-reconcile.sh` *(per-track)* | `SessionStart` | **Lifecycle** | ♻️ Recover state from committed history + run record; stash untrusted work |
 | `track-guard.sh` *(repo-policy)* | `PreToolUse` | **Scope & guard** | 🛡️ Deny edits outside writable scope, frozen paths, artifacts, or destructive ops |
 | `track-evidence.sh` *(per-track)* | `PostToolUse` | **Evidence & quality** | 📸 Capture test output + code fingerprint — what the tool saw, not a model claim |
 | `track-meter.sh` *(repo-policy)* | `PostToolUse` | **Governance** | 🔢 Count tool calls + heartbeat; hard-stop at `TRACK_MAX_TOOL_CALLS` |
 | `track-trace.sh` *(per-track)* | `SubagentStart/Stop` | **Observability** | 🔍 Record **why** each subagent was spawned (`agent_description`) + stop reason |
-| `track-note.sh` *(per-track)* | manual | **Observability** | 📝 Self-report ordered skill activations + loop counts (model-claim provenance tag) |
+| `track-note.sh` *(per-track)* | skill-invoked (each core step) | **Observability** | 📝 Self-report ordered skill activations + loop counts (model-claim provenance tag) |
 | `track-sentinel.sh` *(repo-policy)* | `Stop` | **Scope & guard** | 🔒 Scan staged diff for likely secrets / debug leftovers before handoff |
 | `track-evidence-gate.sh` *(repo-policy)* | `Stop` | **Evidence & quality** | 🚦 Block stop unless evidence is present, **fresh** (fingerprint matches tree), and passing |
 | `track-tokens.sh` *(repo-policy)* | `Stop` | **Governance** | 🪙 Estimate token usage; enforce `TRACK_MAX_TOKEN_ESTIMATE` ceiling (blocks stop + writes `status=budget-exceeded`) |
 | `track-notify.sh` *(repo-policy)* | `Stop` | **Lifecycle** | 📣 Best-effort completion webhook |
-| `track-report.sh` *(per-track)* | manual (Step 8) | **Observability** | 📄 Render deterministic PR-body Auto block (diff, evidence, tool calls, trace) |
+| `track-report.sh` *(per-track)* | skill-invoked (Step 8) | **Observability** | 📄 Render deterministic PR-body Auto block (diff, evidence, tool calls, trace) |
+| `track-wave-preflight.sh` *(EPT-only)* | skill-invoked (EPT Step 1 + 7) | **Lifecycle** | 🌊 Mint/recover wave dispatch breadcrumb; derive per-track `RUN_ID`s as `<wave-id>_<track-id>`; close wave at Step 7 |
 
 Everything a run records lands in `runs/<RUN_ID>.json` (gitignored). Full documentation: **[references/hooks.md](.github/skills/single-branch-development/references/hooks.md)**.
 
@@ -243,6 +250,52 @@ These are **additive and fully modifiable** — edit `TRACK_EVIDENCE_KINDS` and 
 ---
 
 ## 📦 Run artifacts: run record + PR body
+
+**Dispatch breadcrumbs** (`runs/*.dispatch`, gitignored). Lightweight position/identity files written at pipeline entry, closed at PR handoff — the durable "where is this run" anchor.
+
+**Per-track breadcrumb** (`runs/<RUN_ID>.dispatch`). Written by `track-preflight.sh --persist` at Step 1, closed by `--complete` at Step 8. Enables resume: if the session is interrupted, `track-reconcile.sh` finds this file and rebuilds position without re-minting a new ID.
+
+```json
+{
+  "run_id": "2026-07-20T11-30_wave1_us1",
+  "track": "us1",
+  "branch": "track/us1",
+  "scope": "internal/ingest:migrations/0007_",
+  "toolchain": "go,uv",
+  "evidence_floor": "go-test",
+  "created_utc": "2026-07-20T11:30:00Z",
+  "completed_utc": "2026-07-20T12:15:42Z",
+  "duration_secs": 2742
+}
+```
+
+**Wave dispatch breadcrumb** (`runs/<WAVE_ID>.wave.dispatch`, EPT only). Written by `track-wave-preflight.sh --persist` before fan-out, closed by `--complete` after all tracks finish. One wave with 3 tracks produces **4 files** sharing the same `WAVE_ID` prefix — `ls runs/*wave1*` shows the whole fleet state at a glance:
+```
+runs/2026-07-20T11-30_wave1.wave.dispatch      ← orchestrator breadcrumb
+runs/2026-07-20T11-30_wave1_us1.json           ← per-track run record
+runs/2026-07-20T11-30_wave1_us2.json
+runs/2026-07-20T11-30_wave1_us3.json
+```
+
+```json
+{
+  "wave_id": "2026-07-20T11-30_wave1",
+  "wave_number": 1,
+  "base_ref": "origin/main",
+  "base_sha": "abc123def456",
+  "track_run_ids": [
+    "2026-07-20T11-30_wave1_us1",
+    "2026-07-20T11-30_wave1_us2",
+    "2026-07-20T11-30_wave1_us3"
+  ],
+  "status": "all-success",
+  "created_utc": "2026-07-20T11:30:00Z",
+  "completed_utc": "2026-07-20T12:18:05Z",
+  "final_status": "all-success",
+  "duration_secs": 2885
+}
+```
+`final_status` values: `all-success` | `partial-blocked` | `budget-exceeded` | `aborted`.
 
 **Run record** (`runs/<RUN_ID>.json`, gitignored). One per track. Populated by hooks — never re-typed by the model. Example:
 
@@ -330,6 +383,8 @@ Grep any one surface → reconstruct the whole run. `runs/summary.md` aggregates
     reactjs.instructions.md
     state-management.instructions.md
     code-review-generic.instructions.md
+    backing-services.instructions.md  # PostgreSQL, Redis, NATS, Qdrant, MinIO, Casdoor, Caddy
+    devops-cicd.instructions.md       # Docker, Compose, Makefile, GitHub Actions
   skills/
     single-branch-development/
       SKILL.md
@@ -339,7 +394,7 @@ Grep any one surface → reconstruct the whole run. `runs/summary.md` aggregates
       tests/                          # test-skill.sh self-test harness
     executing-parallel-tracks/
       SKILL.md
-      scripts/                        # track-precheck.sh
+      scripts/                        # track-precheck.sh, track-wave-preflight.sh
       tests/
       track-manifest.template.md      # copy to .github/tracks/manifest.md per repo; fill in orchestrator facts
     pr-review-feedback/
@@ -470,6 +525,7 @@ The test harnesses are a **documentation-contract fence + functional regression 
 | `.github/hooks/track-env.base.sh` | Committed repo-wide config (edit this) |
 | `.github/hooks/track-hooks.json` | Event → script wiring |
 | `.github/skills/executing-parallel-tracks/track-manifest.template.md` | Orchestrator manifest template (copy to `.github/tracks/manifest.md`) |
+| `.github/skills/executing-parallel-tracks/scripts/track-wave-preflight.sh` | Wave dispatch: mint `WAVE_ID`, derive per-track `RUN_ID`s, close wave |
 
 ---
 

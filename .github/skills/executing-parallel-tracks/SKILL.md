@@ -82,15 +82,48 @@ Mechanical ceilings (`TRACK_MAX_TOOL_CALLS`, `TRACK_MAX_TOKEN_ESTIMATE`) are set
 
 If a needed field is missing, ask the user once for that specific value; do not guess.
 
-## Traceability: run-id + run records (the spine)
+## Traceability: wave dispatch + run records (the spine)
 
 With N workers in flight, durable state is non-negotiable — the model forgets, the file doesn't.
 
-**One run-id, four surfaces.** Mint a stable run-id per track at dispatch
-(`<UTC-timestamp>_<track_id>`, e.g. `2026-06-26T14-03_us1`) and stamp it into ALL of:
+**Two artifact tiers per wave.** One wave with three tracks produces four files:
+```
+runs/2026-07-20T11-30_wave1.wave.dispatch          ← orchestrator breadcrumb (this skill)
+runs/2026-07-20T11-30_wave1_us1.json               ← per-track run record (SBD track-preflight.sh)
+runs/2026-07-20T11-30_wave1_us2.json
+runs/2026-07-20T11-30_wave1_us3.json
+```
+All four share the `WAVE_ID` prefix, so `ls runs/*wave1*` shows the complete fleet state at a
+glance. All four are gitignored (`runs/` line in `.gitignore`).
+
+**Wave dispatch** (`runs/<wave-id>.wave.dispatch`) — minted by `track-wave-preflight.sh --persist`
+at Step 1 (precheck), closed at Step 7 (--complete). Schema:
+```json
+{
+  "wave_id": "2026-07-20T11-30_wave1",
+  "wave_number": 1,
+  "base_ref": "origin/main",
+  "base_sha": "abc123def456",
+  "track_run_ids": ["2026-07-20T11-30_wave1_us1", "2026-07-20T11-30_wave1_us2", "2026-07-20T11-30_wave1_us3"],
+  "status": "in-progress",
+  "created_utc": "2026-07-20T11:30:00Z",
+  "completed_utc": null,
+  "final_status": null
+}
+```
+`final_status` values: `all-success` | `partial-blocked` | `budget-exceeded` | `aborted`.
+
+**Per-track RUN_ID derivation.** `track-wave-preflight.sh` derives each track's `RUN_ID`
+deterministically as `<wave-id>_<track-id>` (e.g. `2026-07-20T11-30_wave1_us1`). The orchestrator
+exports this as `RUN_ID` when launching each worker — `track-preflight.sh` inside the worker
+recognizes it as an override (the `${RUN_ID:-…}` idiom) and uses it as-is, so the per-track JSON
+filename naturally carries the wave prefix. On resume the wave dispatch's `track_run_ids[]` list is
+the authoritative source — never re-derive manually.
+
+**One run-id, four surfaces.** Each per-track run-id is stamped into ALL of:
 - the branch name (`track/us1` … keep the run-id in the record if the branch name is fixed),
-- the draft PR title (`track/us1 [run 2026-06-26T14-03_us1]`),
-- a commit trailer (`Run-Id: 2026-06-26T14-03_us1`),
+- the draft PR title (`track/us1 [run 2026-07-20T11-30_wave1_us1]`),
+- a commit trailer (`Run-Id: 2026-07-20T11-30_wave1_us1`),
 - the run record filename.
 
 Grep any one surface → reconstruct the whole run.
@@ -264,7 +297,10 @@ Run all checks; proceed silently if all pass, else stop and ask the human with t
 - Requested tracks have **non-overlapping** file ownership and migration ranges (cross-check the ownership map). Overlap → STOP, report the collision (it would only become a merge conflict later anyway). Make this mechanical with the bundled [`scripts/track-precheck.sh`](scripts/track-precheck.sh): pipe it a JSON array of `{id, prefixes}` (each track's `TRACK_ALLOWED_PREFIXES`) and it exits non-zero with the exact colliding prefix pair — the same string-prefix rule the guard enforces, so the precheck asserts on precisely what the workers will run.
 - Docker/host headroom ≥ requested concurrent tracks vs. the manifest cap. Over cap → propose reducing concurrency.
 - `gh` authenticated; remote reachable. `runs/` exists and is git-ignored.
-- Mint a run-id per requested track now (`<UTC-timestamp>_<track_id>`).
+- Mint `WAVE_ID` = `<UTC-timestamp>_wave<WAVE_NUMBER>` and per-track `RUN_ID` = `<WAVE_ID>_<track-id>`.
+  Run `track-wave-preflight.sh` (`inspect` mode first — prints the wave summary + derived IDs;
+  then `--persist` after user confirms the wave plan from Step 0). This creates
+  `runs/<wave-id>.wave.dispatch` and is the resume anchor for the orchestrator session.
 - **Smoke ONE track end-to-end before fanning out the rest.** Run the first track through the full
   pipeline (implement → verify → draft PR) as a single worker and watch it. The first real run
   almost always exposes a missing check, a fuzzy ownership boundary, or a stop condition that needs
@@ -344,6 +380,15 @@ Aggregate every `runs/<run-id>.json` into `runs/summary.md`. Per track report: t
 cost. Do not claim success without the evidence having been produced. Blocked/exhausted runs are
 reported as such — never dressed up as done.
 
+Once the final wave status is known, close the wave dispatch:
+```bash
+WAVE_NUMBER=1 bash scripts/track-wave-preflight.sh --complete all-success
+# or: partial-blocked | budget-exceeded | aborted
+```
+This stamps `completed_utc` + `final_status` + `duration_secs` onto `runs/<wave-id>.wave.dispatch`
+(write-once; re-running is a no-op). The closed breadcrumb is the durable record that Wave N is done
+and Wave N+1 may begin.
+
 ## Skill-Per-Step Map
 
 Kind legend: 🧩 **skill** = runs in-session (reads a SKILL.md); 🤖 **subagent** = dispatched agent with isolated context, maker or reviewer role; ⚙️ **script** = bundled hook/CLI, mechanical, no LLM.
@@ -351,13 +396,13 @@ Kind legend: 🧩 **skill** = runs in-session (reads a SKILL.md); 🤖 **subagen
 | Step | Fires | Kind |
 |------|-------|------|
 | 0 Analyze & plan waves | Read tasks.md / manifest → derive wave plan → confirm with user | (in-session reasoning) |
-| 1 Precheck | `track-precheck.sh` (ownership overlap gate) | ⚙️ script |
+| 1 Precheck | `track-wave-preflight.sh` (mint WAVE\_ID + persist wave dispatch) then `track-precheck.sh` (ownership overlap gate) | ⚙️ script |
 | 2 Isolate (one per track) | `using-git-worktrees` | 🧩 skill |
 | 3 Fan out (one worker per track) | `dispatching-parallel-agents` → N× **worker** subagents, each running `single-branch-development` | 🧩 skill → 🤖 subagents |
 | 4 Per-track draft PR | `track-report.sh` builds Auto block → `gh pr create --draft` | ⚙️ script |
 | 5 Integration (merge gate) | CI + human / merge queue — **not the worker** | (CI/human) |
 | 6 Stale-PR bounce | re-dispatch to owning worker subagent | 🤖 subagent |
-| 7 Report | `track-report.sh` → `runs/summary.md` aggregation | ⚙️ script |
+| 7 Report | `track-report.sh` → `runs/summary.md` aggregation + `track-wave-preflight.sh --complete` | ⚙️ script |
 
 ## Quality Gates (Owned Here)
 
@@ -407,6 +452,12 @@ Start low; graduate only after weeks of clean runs.
 ## References
 
 - `track-manifest.template.md` (bundled) — copy into `.github/tracks/manifest.md` and fill per project.
+- [`scripts/track-wave-preflight.sh`](scripts/track-wave-preflight.sh) (bundled, parallel-only) —
+  mint/recover the orchestrator wave dispatch (`runs/<wave-id>.wave.dispatch`). Modes: `inspect`
+  (default, read-only, prints summary + JSON), `--persist` (write wave breadcrumb; idempotent),
+  `--complete <status>` (stamp `completed_utc` + `final_status`; write-once). Env: `WAVE_NUMBER`
+  (required), `WAVE_TRACKS` (comma-separated track IDs, required for --persist), `WAVE_ID`
+  (override, rare), `TRACK_BASE_REF`. Derives per-track RUN_IDs as `<wave-id>_<track-id>`.
 - [`scripts/track-precheck.sh`](scripts/track-precheck.sh) (bundled, parallel-only) — the mechanical Precheck overlap gate: reads a JSON array of `{id, prefixes}` on stdin, exits 0 when all tracks' ownership prefixes are mutually disjoint, or exit 2 with the exact colliding pair / config error (empty ownership, duplicate id). Run it in Step 1 before fan-out.
 - The Copilot agent-hook bundle is **owned by `single-branch-development`** ([`track-hooks.json`](../single-branch-development/templates/track-hooks.json) + [`scripts/track-*.sh`](../single-branch-development/scripts/)) and reused whole by every worker: `track-reconcile.sh` (SessionStart resume), `track-guard.sh` (PreToolUse ownership + push lockout), `track-evidence.sh` / `track-meter.sh` (PostToolUse evidence + tool-call ceiling), `track-trace.sh` (Subagent trace with per-spawn reason), `track-evidence-gate.sh` / `track-tokens.sh` / `track-sentinel.sh` / `track-notify.sh` (Stop: freshness gate, token estimate, secrets scan, webhook). Manual/CLI members: `track-preflight.sh` (mint/recover RUN_ID), `track-report.sh` (deterministic PR-body Auto block), `track-note.sh` (self-reported skill/loop trace). This orchestrator reuses the bundle and layers per-track/global env on top. See [`references/hooks.md`](../single-branch-development/references/hooks.md) for the full per-script contract.
 - [Copilot agent hooks (GitHub Docs)](https://docs.github.com/en/copilot/concepts/agents/hooks) · [Agent hooks in VS Code](https://code.visualstudio.com/docs/copilot/customization/hooks) · [Hooks reference (per-event I/O schema)](https://code.visualstudio.com/docs/agents/reference/hooks-reference) — events, JSON I/O, exit codes, Claude/CLI cross-compatibility.

@@ -110,6 +110,11 @@ kernel-cannot-import-product rule for a Go cluster; (b) the `.github/instruction
 files the cluster will produce — `go` for a Go cluster, `reactjs`/`state-management` for a frontend
 cluster, `python` for a Python cluster; and (c) `security-and-owasp.instructions.md` for any cluster
 touching a deploy/secrets/network surface (`docker-compose.yml`, a proxy config, a `.env` template).
+(d) **For frontend clusters** (any cluster producing `.tsx`/`.ts`/`.jsx`/`.css` files): also embed the
+relevant design artefacts collected during the SKILL Step-4 discovery — the matching
+`.stitch/designs/<page>.html` mock and/or the `design-system/` page spec — if those files exist.
+Pass silently if absent. Without these, the subagent generates UI from inference rather than the
+approved design, requiring a separate alignment pass.
 Tell the maker in-brief that these are **binding**: the config it returns must *already* satisfy them
 — pinned image tags (no `:latest`), no committed default credentials (env placeholders with a dev
 fallback), security headers on public-facing proxies, strict type/lint settings, coverage floors that

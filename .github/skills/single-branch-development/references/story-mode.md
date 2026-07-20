@@ -106,10 +106,13 @@ reason" is a silent hole; assert real red before proceeding.
 **Each RED-author subagent's brief carries the governance set** (see the SKILL Step-4 "governance is a
 maker obligation" rule): the relevant **constitution** principles, the `.github/instructions/*` matching
 the files under test, and — because story-scope tests encode security behavior (access-scope, injection
-resistance, clearance) — `security-and-owasp.instructions.md`. The tests a maker writes must *assert* the
-governance criteria, not just happy-path behavior, so the frozen suite already pins them down before any
-implementation exists. This complements the Step-3 RED review, which re-applies the same governance as
-the checker backstop.
+resistance, clearance) — `security-and-owasp.instructions.md`. For **frontend test clusters** (files
+testing `.tsx`/`.ts`/`.jsx` components), also include the relevant design artefacts collected during
+the SKILL Step-4 discovery (`.stitch/designs/<page>.html` and/or `design-system/` page spec, if they
+exist) — so the tests assert the correct design intent, not an inferred one. Pass silently if absent.
+The tests a maker writes must *assert* the governance criteria, not just happy-path behavior, so the
+frozen suite already pins them down before any implementation exists. This complements the Step-3 RED
+review, which re-applies the same governance as the checker backstop.
 
 ### Step 3 — review and FREEZE the tests before greening
 
@@ -131,6 +134,13 @@ toward green in **reviewable increments** — each impl task (or a small `[P]` c
 implementer does **not** author a new test (the RED batch already did) — its contract is *"make these
 specific red tests green without weakening them."* You keep SDD's per-increment stage-1 (spec) +
 stage-2 (quality, + security on trust-boundary tasks) review.
+
+**When invoking `subagent-driven-development`, explicitly carry the governance bundle** (constitution
+excerpts + matched `instructions/*` content) that you collected at Step 4's pre-code gate into
+SDD's per-task maker subagent briefs. Subagents have isolated context — they will not see VS Code's
+injected instructions unless the brief includes the content. A brief that names a file without its
+content is an empty reference. Each per-task maker must satisfy the governance constraints *while
+implementing*, so the reviewer's role is a backstop, not the first application.
 
 Why not big-bang green (the literal "green as a whole" form):
 

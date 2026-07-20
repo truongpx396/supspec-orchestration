@@ -126,20 +126,43 @@ subagent vs ⚙️ script).
    `code-review-generic.instructions.md` with `applyTo: '**'`) — and any trust-boundary
    change additionally applies `security-and-owasp.instructions.md`.
 
-   **Governance is a *maker* obligation, not just a checker backstop.** Before **any** fan-out (scaffold
-   generation, story RED authoring, refactor characterization), discover the applicable governance set
-   **once** and **embed it into every parallel subagent's brief**: (a) the project constitution's
-   relevant principles (`.specify/memory/constitution.md`, if present); (b) the `.github/instructions/*`
-   whose `applyTo` globs match the files that cluster will produce (e.g. `go` for a Go cluster,
-   `reactjs`/`state-management` for a frontend cluster, `python` for a Python cluster); and (c)
-   `security-and-owasp.instructions.md` for any cluster touching a trust boundary (deploy/secrets/
-   network/persistence). State in-brief that these are **binding**, so each maker satisfies them *while
-   generating* (pinned image tags, no committed default credentials, secure headers, strict type/lint,
-   parameterized queries) rather than discovering them at review. Applying governance at **both** ends
-   is deliberate defense-in-depth: the maker brief prevents the violation, the review catches whatever
-   slips through. Dispatching a fan-out subagent **without** its governance brief is a defect even if
-   the later review happens to catch the gap — that round-trip is exactly how a bootstrap PR ships
-   hardcoded credentials. All of this **no-ops only when those files genuinely don't exist.**
+   **Governance discovery — read in-session before any code is written or subagent dispatched
+   (mandatory, happens once at Step 4 entry, before the mode guard runs):**
+   1. **Constitution**: read `.specify/memory/constitution.md` if it exists; extract principles
+      relevant to the task surface. If the file is absent, note that — valid no-op, but the check
+      must occur.
+   2. **Matched instructions**: list `.github/instructions/` and **read the full content** of every
+      file whose `applyTo` glob overlaps the paths this task batch will touch. **Always** read
+      `code-review-generic.instructions.md` (`applyTo: '**'`). Also read, when the surface matches:
+      `go.instructions.md` (`**/*.go`), `reactjs.instructions.md` + `state-management.instructions.md`
+      (`**/*.tsx`, `**/*.ts`), `python.instructions.md` (`**/*.py`),
+      `devops-cicd.instructions.md` (Dockerfiles / Compose / CI), `backing-services.instructions.md`
+      (infra / backing-service config).
+   3. **Design context (frontend tasks only)**: when the task surface includes `**/*.tsx`, `**/*.ts`,
+      `**/*.jsx`, `**/*.css`, or any other frontend file — check for design artefacts and **read them
+      if they exist** (pass silently if absent, never fail):
+      - `.stitch/designs/` — Stitch-generated HTML mocks; read the page(s) whose name matches the
+        component/page being built (e.g. `.stitch/designs/library.html` for a library page task).
+      - `design-system/` — design-system docs (e.g. `design-system/aisat-studio/MASTER.md` and the
+        relevant page spec under `design-system/aisat-studio/pages/`).
+      Embed the relevant visual spec / token / layout constraints into every frontend subagent's brief
+      so generated UI matches the approved design from the start rather than diverging and requiring a
+      separate design-alignment pass.
+   4. **Security**: for any cluster that touches a trust boundary (auth, secrets, network, persistence,
+      deploy config): read `security-and-owasp.instructions.md`.
+
+   The resulting in-memory knowledge is the **governance bundle**. Every subagent brief — both
+   `dispatching-parallel-agents` fan-out makers *and* `subagent-driven-development` per-task makers
+   (incremental green / transform) — must embed the **relevant content excerpts** (not just filenames)
+   as binding constraints, so each maker satisfies them *while generating* (pinned image tags, no
+   committed default credentials, secure headers, strict type/lint, parameterized queries) rather than
+   discovering them at review.
+
+   **Governance is a *maker* obligation, not just a checker backstop.** Applying governance at
+   **both** ends is deliberate defense-in-depth: the maker brief prevents the violation, the review
+   catches whatever slips through. Dispatching any subagent **without** having first read the
+   applicable files is a defect — that round-trip is exactly how a bootstrap PR ships hardcoded
+   credentials. **No-ops only when the files genuinely don't exist**, never by omission.
 
    *Self-reported trace (optional):* call [`scripts/track-note.sh`](scripts/track-note.sh)` skill
    <name>` at each core step and `track-note.sh loop <phase>` once per RED→GREEN→review cycle to append
@@ -195,7 +218,7 @@ whether a *skill* runs in your own session or a *subagent* is dispatched:**
 | 3 Isolate | `using-git-worktrees` | 🧩 skill |
 | 4 Core — **story** RED author | `dispatching-parallel-agents` → **N× maker** subagents (each carries the governance brief) | 🧩 skill → 🤖 subagents |
 | 4 Core — **story** RED review + freeze | `requesting-code-review` (applies `code-review-generic.instructions.md` + all matched `.github/instructions/*` + constitution; adds `security-and-owasp` on trust boundaries) | 🧩 skill |
-| 4 Core — **story** incremental green | `subagent-driven-development` → per-task **maker** + **reviewer** subagents (wraps `test-driven-development`, `requesting-code-review`) | 🧩 skill → 🤖 subagents |
+| 4 Core — **story** incremental green | `subagent-driven-development` → per-task **maker** + **reviewer** subagents (+ governance; + `security-and-owasp` on trust boundaries) | 🧩 skill → 🤖 subagents |
 | 4 Core — **refactor** pin-green + characterize | `dispatching-parallel-agents` → **N× maker** subagents (+ governance brief) then `requesting-code-review` | 🧩 skill → 🤖 subagents |
 | 4 Core — **refactor** incremental transform (keep green) | `subagent-driven-development` → **maker** + **reviewer** subagents (+ governance + `security-and-owasp` on trust boundaries) | 🧩 skill → 🤖 subagents |
 | 4 Core — **scaffold** generate | `dispatching-parallel-agents` → **N× maker** subagents (each carries the governance brief) | 🧩 skill → 🤖 subagents |
@@ -326,6 +349,14 @@ Invariants this skill asserts; most are *realized by* SDD's loop, not re-run her
   assertion, loosened matcher, `skip`-ped case, or a behavioral/contract test rewritten to pass is a
   false green in every mode. A genuinely wrong test routes back through its review gate; characterization
   tests must pass at baseline and are never edited to green. (Full rules in the story/refactor sections.)
+- **Governance discovery is a main-session in-context read — not a subagent task, not a filename
+  reference.** The `.github/instructions/*` files must be read **by the main session** before Step 4
+  executes (see the numbered procedure in Step 4). Two failure modes to avoid: (a) delegating the
+  read to a subagent — subagents have isolated context, and "read the instructions then brief
+  yourself" is not reliable; (b) passing a filename without content — a brief that says "follow
+  `go.instructions.md`" gives the subagent nothing to act on if that file isn't in its context. Pass
+  the **content/relevant excerpts**, not the path. VS Code's `applyTo` injection works only in the
+  main session; it does not propagate into dispatched subagents automatically.
 
 ## Hooks (Optional, Composable) — Bundle Owned Here
 
@@ -348,27 +379,14 @@ install/env reference, portability notes, and what `runs/<RUN_ID>.json` does and
 For a **narrow, explicitly-declared** class of work — *mechanical, non-behavioral bootstrap files with
 no test obligation and no trust-boundary surface* (skeletons, manifests, lint/compose/`Makefile`
 configs, test-harness scaffolding) — swap the SDD per-task loop for a batch core that exploits `[P]`
-disjointness for parallel-generation latency:
-
-1. **Guard** — assert every batched task is non-behavioral; **refuse the whole batch** (→ story mode)
-   if any task has a test obligation, touches a trust boundary, or carries a security/correctness
-   criterion.
-2. **Fan out generation** (`dispatching-parallel-agents`) — one **read-only** subagent per
-   **independent domain / disjoint-file cluster** (not one-per-file, not one-per-task) returns its
-   file bodies as text; none writes to disk, runs tests, or commits. A single file written by two
-   tasks (e.g. a `pyproject.toml` holding both deps and lint config) stays in **one** agent; two
-   agents must never share a target file.
-3. **Apply** all bodies at once (controller = single writer) → one converged tree.
-4. **One `verification-before-completion` capture** — build + lint + bring-up health check; paste
-   output. This proves the scaffold *works*.
-5. **One `requesting-code-review`** over the whole diff — the reviewer subagent applies
-   `code-review-generic.instructions.md` (always, `applyTo: '**'`) plus all matched
-   `.github/instructions/*` (language/framework-specific) plus the constitution (hard gate);
-   no `security-and-owasp` add-on — the guard cleared trust boundaries. Then the same **draft-PR finish**.
-
-Steps 4 and 5 are orthogonal and both mandatory: verification proves it *works*, review proves it is
-*correct*. TDD and two-stage review are dropped only because the guard proved the batch is
-non-behavioral — scaffold mode swaps only the core.
+disjointness for parallel-generation latency. **Guard** the batch (refuse to story mode on any test
+obligation / trust boundary / correctness criterion), **fan out** read-only generator subagents
+(`dispatching-parallel-agents`, one per disjoint-file cluster, never sharing a target file), the
+controller **applies** all returned bodies as sole writer, then run **one**
+`verification-before-completion` capture (proves it *works*) **and one** `requesting-code-review` over
+the diff (proves it *correct* — governance gate, no `security-and-owasp` since the guard cleared trust
+boundaries) — both mandatory. TDD and two-stage review are dropped only because the guard proved the
+batch non-behavioral; scaffold swaps only the core.
 
 See [`references/scaffold-mode.md`](references/scaffold-mode.md) for the full flow, the eligibility
 guard, and the drop-vs-keep table.
@@ -378,31 +396,19 @@ guard, and the drop-vs-keep table.
 For **behavioral user-story stages** that a spec-driven plan lays out as two task groups — a
 write-first `### Tests` group (contract/integration/**security** tests, all `[P]`) and a separate
 `### Implementation` group — swap the SDD per-task loop for a story core that authors the tests as a
-batch, then greens implementation incrementally. This is the **inverse of scaffold mode**: scaffold
-refuses anything behavioral; story mode requires it. Per-task TDD can't run here — a test task and its
-implementing task are distinct IDs in different files/runtimes.
-
-1. **Guard** — confirm the batch is behavioral. A `### Tests` + `### Implementation` split runs here; a
-   lone behavioral task runs here as **N=1**. Only pure non-behavioral bootstrap routes away → scaffold.
-2. **RED batch** (`dispatching-parallel-agents`) — fan out generation of the `### Tests` group, apply
-   serially, **run**, and assert the whole group fails for the right reason (real red, not a typo).
-3. **RED review + freeze** (`requesting-code-review` **+** `security-and-owasp`) — the reviewer
-   subagent applies `code-review-generic.instructions.md` (always) + matched `.github/instructions/*`
-   + constitution + `security-and-owasp`. Review the failing suite, then **freeze** it: green may
-   add production code only. Greening by weakening a test is forbidden.
-4. **Incremental green** (`subagent-driven-development`) — implement the `### Implementation` group in
-   dependency order; each task/cluster flips an identifiable subset green, with per-increment
-   stage-1/stage-2 (+ security) review. Not big-bang — a story-long red period discards TDD's feedback
-   loop.
-5. **Converge & verify-all** (`verification-before-completion`) — freeze, run the whole story suite +
-   every evidence kind on one fingerprint; the story's **Checkpoint** line is the Definition of Done.
+batch, then greens implementation incrementally. This is the **inverse of scaffold mode** (scaffold
+refuses behavioral work, story requires it; a lone behavioral task runs here as **N=1**); per-task TDD
+can't run because a test task and its implementing task are distinct IDs in different files/runtimes.
+**Guard** behavioral, author the **RED batch** (`dispatching-parallel-agents` → apply → run → assert
+real red, not a typo), **review + freeze** it (`requesting-code-review` **+** `security-and-owasp`;
+green may add production code only, never weaken a test), **green incrementally**
+(`subagent-driven-development` in dependency order, per-increment two-stage + security review — not
+big-bang, a story-long red period discards TDD's feedback loop), then **converge & verify-all**
+(`verification-before-completion`; the story's **Checkpoint** line is the Definition of Done).
 
 **Bugfix?** Same core at **N=1**, prefixed with `systematic-debugging`: reproduce and root-cause
-*first*, encode the diagnosis as the failing regression test (that's the RED batch), then green it. It
-is not a separate mode — diagnose before writing the fix so you green the cause, not a symptom.
-
-TDD is kept at story scope (via the RED batch); the two-stage review is kept (RED review up front +
-per-increment green review).
+*first*, encode the diagnosis as the failing regression test (that's the RED batch), then green the
+cause — not a separate mode, just diagnose before writing the fix.
 
 See [`references/story-mode.md`](references/story-mode.md) for the full flow, the skill-per-step map,
 the freeze rule, and the incremental-vs-big-bang rationale.
@@ -412,33 +418,20 @@ the freeze rule, and the incremental-vs-big-bang rationale.
 For **behavior-preserving change to existing behavioral code** — rename, extract, inline, de-duplicate,
 restructure, move, or retype with **no change to observable behavior or public contract** — swap the
 SDD per-task loop for a keep-green core. This is the **third sibling** of scaffold and story mode and
-the **inverse of story mode**: story mode starts RED (new failing tests) and drives to green; refactor
-mode starts GREEN and **stays green** the whole way. Scaffold mode refuses anything behavioral; story
-mode *adds* behavior; refactor mode *touches* behavioral code but adds none.
+the **inverse of story mode**: it starts GREEN and **stays green** the whole way (story *adds*
+behavior, refactor *touches* behavioral code but adds none). **Guard** behavior-preserving (new/changed
+behavior → story mode; a bugfix is story mode N=1; pure bootstrap → scaffold), **pin green +
+characterize** (`dispatching-parallel-agents` + `requesting-code-review`: confirm the suite is green
+first, author characterization tests that must **pass immediately** where coverage is thin — one that
+fails at baseline is a wrong test, not a found bug — then review and freeze), **transform incrementally**
+(`subagent-driven-development`, + `security-and-owasp` on trust boundaries; the suite stays green after
+**every** step — a red test means behavior changed, route to story mode; frozen behavioral/contract
+tests never move, only implementation-coupled unit tests move in lockstep under review), then **converge
+& verify-all** (`verification-before-completion`) and confirm the contract is unchanged. Definition of
+Done: **same behavior, clearer structure**.
 
-1. **Guard** — confirm the change is behavior-preserving: no new/changed behavior, no altered
-   request/response or persistence contract, no new trust-boundary surface. New or changed behavior →
-   **story mode**. A bugfix is **not** a refactor (it changes wrong behavior) → story mode N=1. Pure
-   non-behavioral bootstrap → **scaffold mode**.
-2. **Pin green + characterize** (`dispatching-parallel-agents` + `requesting-code-review`) — run the
-   existing suite over the surface and confirm it is green *before touching anything*. Where coverage
-   of the code you're about to move is thin, author **characterization tests first** — the mirror of
-   the RED batch: they must **pass immediately** (they pin current behavior). A characterization test
-   that fails at baseline is a wrong test, not a found bug — route it back; never change behavior to
-   green it. Review, then **freeze** this safety net.
-3. **Transform incrementally** (`subagent-driven-development`, + `security-and-owasp` on trust
-   boundaries) — apply the refactor in small reviewable steps; after **every** step the whole suite
-   stays green. No long red period — a refactor that goes red has changed behavior (it is wrong, or it
-   was story work in disguise). Behavioral/contract tests are frozen; only implementation-coupled unit
-   tests may move in lockstep with the code, and that move goes through maker/checker review to prove
-   it is coupling, not a silent behavior edit.
-4. **Converge & verify-all** (`verification-before-completion`) — freeze, run the whole suite + every
-   evidence kind on one fingerprint, and confirm the public contract is unchanged. Definition of Done:
-   **same behavior, clearer structure** — the suite that passed at pin-green still passes, untouched.
-
-TDD's red→green is replaced by keep-green (characterization + never-red transform); the two-stage
-review is kept (characterization review up front + per-step transform review, + security on trust
-boundaries).
+TDD's red→green is replaced by keep-green; the two-stage review is kept (characterization review up
+front + per-step transform review, + security on trust boundaries).
 
 See [`references/refactor-mode.md`](references/refactor-mode.md) for the full flow, the
 behavior-preserving guard, the freeze/keep-green rule, and the characterization-vs-RED contrast.

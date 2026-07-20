@@ -143,6 +143,12 @@ matching `.github/instructions/*` — plus security on trust-boundary code: movi
 access-filter code can silently change enforcement even when tests pass, so re-apply
 `security-and-owasp.instructions.md`).
 
+**When invoking `subagent-driven-development`, explicitly carry the governance bundle** (constitution
+excerpts + matched `instructions/*` content) that you collected at Step 4's pre-code gate into
+SDD's per-task maker subagent briefs. Subagents have isolated context — they will not see VS Code's
+injected instructions unless the brief includes the content. Each per-task maker must satisfy the
+constitution + matched instructions *while restructuring*, not just satisfy them at review.
+
 Why incremental rather than one big transform:
 
 - **Localization.** If step 7 turns a test red, you know exactly which structural move broke it. A
