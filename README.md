@@ -251,10 +251,30 @@ These are **additive and fully modifiable** — edit `TRACK_EVIDENCE_KINDS` and 
 
 ## 📦 Run artifacts: run record + PR body
 
-**Dispatch breadcrumbs** (`runs/*.dispatch`, gitignored). Lightweight position/identity files written at pipeline entry, closed at PR handoff — the durable "where is this run" anchor.
+Three artifact types are produced across a run. Each is owned by a specific skill — knowing this lets you grep the right file when debugging.
 
-**Per-track breadcrumb** (`runs/<RUN_ID>.dispatch`). Written by `track-preflight.sh --persist` at Step 1, closed by `--complete` at Step 8. Enables resume: if the session is interrupted, `track-reconcile.sh` finds this file and rebuilds position without re-minting a new ID.
+---
 
+### 🌿 Produced by `single-branch-development` — every flow
+
+**Per-track breadcrumb** (`runs/<RUN_ID>.dispatch`, gitignored). Written by `track-preflight.sh --persist` at Step 1, closed by `--complete` at Step 8. Exists for **every** SBD run — standalone (Flows 1–3) and EPT-dispatched (Flow 4). Enables resume: if the session is interrupted, `track-reconcile.sh` finds this file and rebuilds position without re-minting a new ID.
+
+Standalone SBD run (Flows 1–3) — plain `<timestamp>_<track-id>` format, no wave prefix:
+```json
+{
+  "run_id": "2026-07-20T14-03_us1",
+  "track": "us1",
+  "branch": "track/us1",
+  "scope": "internal/ingest/:migrations/0007_",
+  "toolchain": "go,uv",
+  "evidence_floor": "go-test",
+  "created_utc": "2026-07-20T14:03:00Z",
+  "completed_utc": "2026-07-20T15:10:22Z",
+  "duration_secs": 4042
+}
+```
+
+EPT-dispatched track (Flow 4) — `RUN_ID` carries the wave prefix, derived by `track-wave-preflight.sh`:
 ```json
 {
   "run_id": "2026-07-20T11-30_wave1_us1",
@@ -269,10 +289,36 @@ These are **additive and fully modifiable** — edit `TRACK_EVIDENCE_KINDS` and 
 }
 ```
 
-**Wave dispatch breadcrumb** (`runs/<WAVE_ID>.wave.dispatch`, EPT only). Written by `track-wave-preflight.sh --persist` before fan-out, closed by `--complete` after all tracks finish. One wave with 3 tracks produces **4 files** sharing the same `WAVE_ID` prefix — `ls runs/*wave1*` shows the whole fleet state at a glance:
+**Run record** (`runs/<RUN_ID>.json`, gitignored). One per track, populated by hooks — never re-typed by the model. Contains the full observability payload:
+
+```json
+{
+  "run_id": "2026-06-26T14-03_us1",
+  "track": "us1",
+  "status": "success",
+  "evidence": { "go-test": "42 passed", "ts": "0 errors" },
+  "tool_calls": 137,
+  "token_estimate": 48000,
+  "trace": [
+    { "t": "…", "kind": "subagent", "event": "start", "agent_id": "sub-01", "agent_type": "implementer", "reason": "green T038 impl" },
+    { "t": "…", "kind": "subagent", "event": "stop",  "agent_id": "sub-01", "agent_type": "implementer", "stop_reason": "done" }
+  ],
+  "skills": [
+    { "t": "…", "skill": "subagent-driven-development", "step": "4-green", "self_reported": true }
+  ]
+}
 ```
-runs/2026-07-20T11-30_wave1.wave.dispatch      ← orchestrator breadcrumb
-runs/2026-07-20T11-30_wave1_us1.json           ← per-track run record
+
+---
+
+### 🪢 Produced by `executing-parallel-tracks` — Flow 4 only
+
+**Wave dispatch breadcrumb** (`runs/<WAVE_ID>.wave.dispatch`, gitignored). Written by `track-wave-preflight.sh --persist` before fan-out, closed by `--complete` after all tracks finish. **EPT-only** — standalone SBD runs do not produce this file. It is the durable orchestrator resume anchor: if interrupted, the wave's `track_run_ids[]` list is the authoritative source for reconstructing per-track state.
+
+One wave with 3 tracks produces **4 files** sharing the same `WAVE_ID` prefix — `ls runs/*wave1*` shows the whole fleet at a glance:
+```
+runs/2026-07-20T11-30_wave1.wave.dispatch      ← orchestrator breadcrumb (track-wave-preflight.sh)
+runs/2026-07-20T11-30_wave1_us1.json           ← per-track run record (track-preflight.sh)
 runs/2026-07-20T11-30_wave1_us2.json
 runs/2026-07-20T11-30_wave1_us3.json
 ```
@@ -297,25 +343,7 @@ runs/2026-07-20T11-30_wave1_us3.json
 ```
 `final_status` values: `all-success` | `partial-blocked` | `budget-exceeded` | `aborted`.
 
-**Run record** (`runs/<RUN_ID>.json`, gitignored). One per track. Populated by hooks — never re-typed by the model. Example:
-
-```json
-{
-  "run_id": "2026-06-26T14-03_us1",
-  "track": "us1",
-  "status": "success",
-  "evidence": { "go-test": "42 passed", "ts": "0 errors" },
-  "tool_calls": 137,
-  "token_estimate": 48000,
-  "trace": [
-    { "t": "…", "kind": "subagent", "event": "start", "agent_id": "sub-01", "agent_type": "implementer", "reason": "green T038 impl" },
-    { "t": "…", "kind": "subagent", "event": "stop",  "agent_id": "sub-01", "agent_type": "implementer", "stop_reason": "done" }
-  ],
-  "skills": [
-    { "t": "…", "skill": "subagent-driven-development", "step": "4-green", "self_reported": true }
-  ]
-}
-```
+---
 
 **`status` values** — written by hooks, never by the model:
 
@@ -483,10 +511,10 @@ Example value: `*.go:go-test;*.py:py;*.tsx:ts;*.ts:ts;migrations/*:pg-explain`
 ### 3️⃣ Invoke a skill
 Point Copilot at the task and let the skill drive:
 
-- *"implement Phase 1 Setup — shared infrastructure (T001–T010a)"* → Flow 1
-- *"implement Phase 3 User Story 1: Ingest knowledge into a searchable library (T035–T056)"* → Flow 2
-- *"refactor Phase 2 Foundational — frontend API client (T031) using single-branch-development"* → Flow 3
-- *"execute Phase 3 User Story 1, Phase 4 User Story 2, Phase 5 User Story 3 in parallel using executing-parallel-tracks"* → Flow 4
+- *"implement Phase 1 Setup — shared infrastructure (T001–T010a) **using single-branch-development skill**"* → Flow 1 (scaffold)
+- *"implement Phase 3 User Story 1: Ingest knowledge into a searchable library (T035–T056) **using single-branch-development skill**"* → Flow 2 (story/TDD)
+- *"refactor Phase 2 Foundational — frontend API client (T031) **using single-branch-development skill**"* → Flow 3 (refactor)
+- *"execute Phase 3 US1, Phase 4 US2, Phase 5 US3 in parallel **using executing-parallel-tracks skill**"* → Flow 4 (parallel)
 
 The worker stops at `gh pr create --draft`. **A human owns the merge.**
 
