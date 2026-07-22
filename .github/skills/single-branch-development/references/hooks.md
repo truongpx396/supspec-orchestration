@@ -32,6 +32,63 @@ exit code `2` (stderr → model) or `hookSpecificOutput.permissionDecision: "den
 - **Bash + `jq` only.** The bundle ships no PowerShell port; on non-bash surfaces run the scripts
   under a bash-compatible shell.
 
+## Running Under Claude Code
+
+The hook **scripts are surface-agnostic** — they already read Claude Code's stdin JSON
+(`tool_name`, snake_case `tool_input.file_path` / `tool_input.command`, `hook_event_name`,
+`stop_hook_active`, `transcript_path`) and already emit Claude Code's contracts
+(`hookSpecificOutput.permissionDecision:"deny"` on `PreToolUse`; `{decision:"block", reason}` /
+`{continue:false, stopReason}` on `Stop`). Only the **wiring** that registers the scripts differs,
+and the bundle now ships both:
+
+- **Copilot** → [`../templates/track-hooks.json`](../templates/track-hooks.json) copied into
+  `.github/hooks/` (repo-scoped Copilot agent hooks).
+- **Claude Code** → [`../templates/claude-settings.json`](../templates/claude-settings.json)
+  merged into `.claude/settings.json`.
+
+Install the Claude Code wiring with the same installer:
+
+```bash
+install-hooks.sh --surface claude --apply   # or omit --surface (default: both) to wire both surfaces
+install-hooks.sh --surface claude --check   # reports whether .claude/settings.json is wired
+```
+
+`--apply` syncs the shared `track-*.sh` scripts, gitignores `runs/`, seeds `track-env.base.sh`, and
+**appends** the hooks block into `.claude/settings.json` — append-only and dedup'd by block, so your
+other settings and hooks are preserved and re-running is idempotent. The `track-*.sh` still live in
+`.github/hooks/` and travel into every worktree exactly as under Copilot; only the registration moves
+to `.claude/settings.json`.
+
+### Event & matcher mapping
+
+Claude Code **does** scope hooks by a `matcher` (an advantage over Copilot's fire-on-every-call
+model), so the wiring is tighter than the Copilot manifest:
+
+| Claude Code event | matcher | script(s) |
+|---|---|---|
+| `SessionStart` | — | `track-reconcile.sh` |
+| `PreToolUse` | `Write\|Edit\|MultiEdit\|NotebookEdit\|Bash` | `track-guard.sh` |
+| `PostToolUse` | `Bash` | `track-evidence.sh` |
+| `PostToolUse` | `*` | `track-meter.sh` |
+| `SubagentStop` | — | `track-trace.sh` |
+| `Stop` | — | `track-evidence-gate.sh`, `track-tokens.sh`, `track-sentinel.sh`, `track-notify.sh` |
+
+### Two Claude Code deltas to know
+
+- **No `SubagentStart` event.** Claude Code exposes only `SubagentStop`, so `track-trace.sh` records
+  each subagent's **stop** (and stamps the heartbeat) but not its spawn `reason`. Claude Code's
+  `SubagentStop` payload is also minimal — it carries no `agent_type`/`agent_description` — so trace
+  entries under Claude Code count subagent boundaries without naming them. Subagent count + heartbeat
+  still work; the spawn-reason column is Copilot-only.
+- **No `applyTo` auto-injection.** VS Code auto-loads `.github/instructions/*` by their `applyTo`
+  globs; Claude Code does not. This is a **no-op for correctness** because the skill's Step 4 already
+  mandates reading the matched instruction files in-session — the governance gate is driven by the
+  skill body, not by editor auto-injection.
+- **Stop-block exit code.** Claude Code blocks a stop only on exit **2** (exit 1 is a *non-blocking*
+  error that lets the stop proceed). The gates that block via `{decision:"block"}` JSON
+  (`track-evidence-gate.sh`, `track-sentinel.sh`) are exit-code-agnostic; `track-tokens.sh` blocks via
+  exit **2**, which is also non-zero so Copilot still blocks on it.
+
 ## Bundled Scripts
 
 | Pipeline gate | Bundled script (event) | What it does |
@@ -60,7 +117,13 @@ evidence fingerprint; a missing base preset runs the resume ungated):
 install-hooks.sh --check   # exit 3 if installed bundle is missing/stale (drift probe)
 install-hooks.sh           # DRY-RUN: print the plan, write nothing
 install-hooks.sh --apply   # sync bundle + gitignore runs/ + seed stack-aware track-env.base.sh
+                           #   + install the hook WIRING for the chosen surface(s)
 ```
+
+By default the installer wires **both** surfaces (Copilot `track-hooks.json` + Claude Code
+`.claude/settings.json`). Scope it with `--surface`: `--surface copilot`, `--surface claude`, or
+`--surface both` (default). See [Running Under Claude Code](#running-under-claude-code) for the
+Claude Code specifics.
 
 It (1) syncs `scripts/track-*.sh` + `templates/track-hooks.json` into `.github/hooks/`, (2) ensures
 `runs/` is gitignored, and (3) seeds `.github/hooks/track-env.base.sh` **only if absent**, pre-filled

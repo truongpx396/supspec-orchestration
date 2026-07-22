@@ -47,7 +47,7 @@ unset __env_dir
 
 input="$(cat)"
 tool="$(jq -r '.tool_name // empty' <<<"$input")"
-case "$tool" in run_in_terminal | bash | shell) ;; *) exit 0 ;; esac
+case "$tool" in run_in_terminal | bash | shell | Bash) ;; *) exit 0 ;; esac
 
 cmd="$(jq -r '.tool_input.command // .tool_input.bash // empty' <<<"$input")"
 [ -n "$cmd" ] || exit 0
