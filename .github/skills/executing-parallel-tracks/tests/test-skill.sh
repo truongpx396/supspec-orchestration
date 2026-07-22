@@ -115,10 +115,15 @@ detect_overlap() {
   return $r
 }
 
-# Extract the first JSON block from SKILL.md (the run record example)
+# Extract the run-record example from SKILL.md — specifically the ```json block that
+# contains "run_id". Selecting by content (not "first block") keeps this robust when
+# other json blocks (e.g. the wave-dispatch example) appear before it in the doc.
 # Strip JS-style inline comments so jq can parse it.
-RUN_RECORD_JSON="$(awk '/^```json/{flag=1;next}/^```/{if(flag)exit}flag' "$SKILL" \
-  | sed 's|//.*||')"
+RUN_RECORD_JSON="$(awk '
+  /^```json/ { flag=1; buf=""; next }
+  /^```/     { if (flag) { if (buf ~ /"run_id"/) { printf "%s", buf; exit } flag=0 } next }
+  flag       { buf = buf $0 "\n" }
+' "$SKILL" | sed 's|//.*||')"
 
 # ═════════════════════════════════════════════════════════════════════════════
 # Suite 1 — SKILL.md Structural Integrity
