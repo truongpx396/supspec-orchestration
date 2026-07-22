@@ -5,19 +5,29 @@
 # skips the committed track-env.base.sh preset — so a resume runs SILENTLY UNGATED.
 #
 # What it does (all idempotent, all non-destructive to your edits):
-#   1. Sync scripts/track-*.sh + templates/track-hooks.json into .github/hooks/ (fixes drift).
+#   1. Sync scripts/track-*.sh into .github/hooks/ (fixes drift). The hook SCRIPTS are
+#      surface-agnostic — the same track-*.sh serve Copilot and Claude Code; only the
+#      WIRING that registers them differs (see --surface below).
 #   2. Ensure runs/ is gitignored (the fingerprint self-stales otherwise — see hooks.md).
 #   3. Seed .github/hooks/track-env.base.sh from the template ONLY IF ABSENT, pre-filled with
 #      a STACK-AWARE, repo-relevant starting point (never clobbers an existing one).
+#   4. Install the hook WIRING for the chosen surface(s):
+#        copilot → copy templates/track-hooks.json into .github/hooks/ (Copilot agent hooks).
+#        claude  → merge templates/claude-settings.json's hooks block into .claude/settings.json
+#                  (append-only, dedup'd — never clobbers your other settings or hooks).
 #
-# SAFETY MODEL — this writes into shared repo config (.github/hooks/, .gitignore), so it is
-# DRY-RUN BY DEFAULT: it prints a plan and touches nothing. Pass --apply to execute. The
-# skill's Step 0 runs the dry-run, shows you the plan, asks for consent, THEN runs --apply.
+# SAFETY MODEL — this writes into shared repo config (.github/hooks/, .gitignore, and, under
+# --surface claude/both, .claude/settings.json), so it is DRY-RUN BY DEFAULT: it prints a plan
+# and touches nothing. Pass --apply to execute. The skill's Step 0 runs the dry-run, shows you
+# the plan, asks for consent, THEN runs --apply.
 #
 # Usage:
 #   install-hooks.sh                 # dry-run: print the plan, write nothing
 #   install-hooks.sh --apply         # execute the plan
 #   install-hooks.sh --check         # drift-only: exit 3 if the installed bundle != source
+#   install-hooks.sh --surface X     # X = copilot | claude | both (default: both)
+#                                    #   copilot → .github/hooks/track-hooks.json wiring
+#                                    #   claude  → .claude/settings.json hooks block
 #
 # Idempotent: re-running is safe; already-synced files and an existing base preset are left
 # alone. Requires: bash, git (for repo root + gitignore). Keep runtime < 5s.
@@ -32,14 +42,25 @@ HOOKS_DIR="$REPO_ROOT/.github/hooks"
 RUNS_DIR_NAME="${RUNS_DIR:-runs}"
 
 mode="dry-run"
+surface="both"            # copilot | claude | both — which hook WIRING to install
+expect_surface=0
 for arg in "$@"; do
+  if [ "$expect_surface" -eq 1 ]; then surface="$arg"; expect_surface=0; continue; fi
   case "$arg" in
     --apply) mode="apply" ;;
     --check) mode="check" ;;
+    --surface) expect_surface=1 ;;
+    --surface=*) surface="${arg#--surface=}" ;;
     -h|--help) grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) printf 'install-hooks: unknown arg: %s\n' "$arg" >&2; exit 2 ;;
   esac
 done
+case "$surface" in
+  copilot|claude|both) ;;
+  *) printf 'install-hooks: --surface must be copilot|claude|both (got: %s)\n' "$surface" >&2; exit 2 ;;
+esac
+# surface_has copilot / surface_has claude — true when that wiring is in scope.
+surface_has() { [ "$surface" = "both" ] || [ "$surface" = "$1" ]; }
 
 # Everything the bundle ships: every hook script (excluding this installer + the preflight-only
 # helper naming) plus the wiring manifest. Copied verbatim into .github/hooks/.
@@ -57,13 +78,50 @@ drift_list() {
     src="$SRC_SCRIPTS/$name"; dst="$HOOKS_DIR/$name"
     files_differ "$src" "$dst" && printf '%s\n' "$name"
   done
-  src="$SRC_TEMPLATES/track-hooks.json"; dst="$HOOKS_DIR/track-hooks.json"
-  files_differ "$src" "$dst" && printf 'track-hooks.json\n'
+  if surface_has copilot; then
+    src="$SRC_TEMPLATES/track-hooks.json"; dst="$HOOKS_DIR/track-hooks.json"
+    files_differ "$src" "$dst" && printf 'track-hooks.json\n'
+  fi
+}
+
+# claude_wired — true when .claude/settings.json already registers our reconcile hook
+# (a light presence probe, not a byte-for-byte drift check; the scripts are the drift risk).
+claude_wired() {
+  local s="$REPO_ROOT/.claude/settings.json"
+  [ -f "$s" ] || return 1
+  jq -e '[.hooks.SessionStart[]?.hooks[]?.command // ""] | any(test("track-reconcile\\.sh"))' \
+    "$s" >/dev/null 2>&1
+}
+
+# merge_claude_wiring — create .claude/settings.json from the template, or append our hooks
+# block into an existing one. Append-only + dedup'd by exact block, so it never clobbers the
+# user's other settings/hooks and is idempotent across re-runs.
+merge_claude_wiring() {
+  local settings="$REPO_ROOT/.claude/settings.json"
+  local tmpl="$SRC_TEMPLATES/claude-settings.json"
+  mkdir -p "$REPO_ROOT/.claude"
+  if [ ! -f "$settings" ]; then
+    cp "$tmpl" "$settings"; return 0
+  fi
+  local tmp; tmp="$(mktemp)"
+  jq -s '
+    (.[0] | (.hooks //= {})) as $base
+    | .[1] as $add
+    | reduce ($add.hooks | to_entries[]) as $e
+        ($base;
+          .hooks[$e.key] = (((.hooks[$e.key] // []) + $e.value) | unique_by(tojson)))
+  ' "$settings" "$tmpl" > "$tmp" && mv "$tmp" "$settings"
 }
 
 # --check: report drift and exit non-zero if any exists (for CI / the skill's Step 0 probe).
+# Exit code tracks the SCRIPT/copilot-json drift (the stale-bundle footgun). The Claude
+# wiring is a merge target, not a byte copy, so its absence is reported as an informational
+# note that doesn't by itself flip the exit code.
 if [ "$mode" = "check" ]; then
   drift="$(drift_list || true)"
+  if surface_has claude && ! claude_wired; then
+    printf 'NOTE: Claude Code wiring absent from .claude/settings.json — run: install-hooks.sh --apply --surface claude\n'
+  fi
   if [ -n "$drift" ]; then
     printf 'DRIFT: %d bundle file(s) missing or stale in %s:\n' \
       "$(printf '%s\n' "$drift" | grep -c .)" "$HOOKS_DIR"
@@ -198,7 +256,9 @@ if [ -n "$drift" ]; then
     for name in $(bundle_scripts); do
       cp "$SRC_SCRIPTS/$name" "$HOOKS_DIR/$name"; chmod +x "$HOOKS_DIR/$name"
     done
-    cp "$SRC_TEMPLATES/track-hooks.json" "$HOOKS_DIR/track-hooks.json"
+    if surface_has copilot; then
+      cp "$SRC_TEMPLATES/track-hooks.json" "$HOOKS_DIR/track-hooks.json"
+    fi
     say "   ✓ synced"
   fi
 else
@@ -233,8 +293,25 @@ else
 fi
 say ""
 
+# 4. Claude Code wiring (.claude/settings.json) — only when surface includes claude.
+commit_paths=".github/hooks .gitignore"
+if surface_has claude; then
+  commit_paths="$commit_paths .claude/settings.json"
+  if claude_wired; then
+    say "4. Claude Code wiring (.claude/settings.json): already registers the track hooks — left as-is."
+  elif [ -f "$REPO_ROOT/.claude/settings.json" ]; then
+    say "4. Claude Code wiring: append our hooks block into existing .claude/settings.json"
+    say "     (append-only + dedup'd — your other settings and hooks are preserved)."
+    if act; then merge_claude_wiring; say "   ✓ merged (review + commit it)"; fi
+  else
+    say "4. Claude Code wiring: create .claude/settings.json from the template."
+    if act; then merge_claude_wiring; say "   ✓ created (review + commit it)"; fi
+  fi
+  say ""
+fi
+
 if act; then
-  say "Done. Review changes, then: git add .github/hooks .gitignore && git commit"
+  say "Done. Review changes, then: git add $commit_paths && git commit"
 else
   say "Dry-run only — nothing written. Re-run with --apply to execute (after you consent)."
 fi

@@ -30,8 +30,9 @@
 #   first exceeds the ceiling the hook:
 #     1. Writes `status: "budget-exceeded"` to the run record.
 #     2. Prints a clear message with the estimate and ceiling.
-#     3. Exits non-zero to block the stop — the agent sees the message and knows
-#        NOT to open a PR. On the NEXT stop attempt the hook sees `status:
+#     3. Exits 2 to block the stop — the agent sees the message and knows
+#        NOT to open a PR. (Exit 2 is Claude Code's stop-blocking code AND is
+#        non-zero, so Copilot blocks on it too.) On the NEXT stop attempt the hook sees `status:
 #        "budget-exceeded"` already set and exits 0, allowing the run to end
 #        cleanly with the terminal state recorded.
 #   This mirrors how track-evidence-gate.sh blocks on a first miss and allows
@@ -118,7 +119,7 @@ if [ "$ceiling" -gt 0 ] && [ "$estimate" -gt "$ceiling" ]; then
     "  Run record status set to 'budget-exceeded'." \
     "  DO NOT open a draft PR. Report status to orchestrator and stop cleanly." \
     "  (On the next stop attempt the hook will allow the clean exit.)" >&2
-  exit 1
+  exit 2   # 2 = Claude Code's stop-blocking code; also non-zero so Copilot blocks too
 fi
 
 # --- normal recording (under budget or no ceiling) ---------------------------

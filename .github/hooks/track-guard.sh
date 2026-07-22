@@ -36,11 +36,13 @@
 #                            --no-verify, gh pr merge, git merge, and reset --hard
 #                            stay denied, so only a fast-forward push is allowed.
 #
-# NOTE: VS Code ignores hook "matchers", so this script fires on EVERY tool call
-# and branches on tool_name itself. Tool names / input keys differ across
-# surfaces — VS Code: create_file / replace_string_in_file, camelCase
-# tool_input.filePath; Claude/CLI: Write / Edit, snake_case file_path. Both are
-# handled below.
+# NOTE: Copilot/VS Code ignores hook "matchers", so under that surface this script
+# fires on EVERY tool call and branches on tool_name itself. Claude Code DOES scope
+# by matcher (see the .claude/settings.json wiring), but the branching stays so a
+# single script serves both surfaces. Tool names / input keys differ across
+# surfaces — VS Code: create_file / replace_string_in_file + run_in_terminal,
+# camelCase tool_input.filePath; Claude Code: Write / Edit / MultiEdit + Bash,
+# snake_case file_path / command. All are handled below.
 set -eufo pipefail   # -f: no globbing (path prefixes are literal, never patterns)
 
 # Bootstrap: load hook presets sitting beside this script, if present:
@@ -105,11 +107,13 @@ _git_relpath() {
 }
 
 case "$tool" in
-  create_file | replace_string_in_file | multi_replace_string_in_file | edit_notebook_file | Write | Edit | MultiEdit)
+  create_file | replace_string_in_file | multi_replace_string_in_file | edit_notebook_file | Write | Edit | MultiEdit | NotebookEdit)
     # Collect every target path this edit touches, across surface variants.
+    # NotebookEdit (Claude Code) carries its target as tool_input.notebook_path.
     paths="$(jq -r '
       [ .tool_input.filePath?,
         .tool_input.file_path?,
+        .tool_input.notebook_path?,
         (.tool_input.replacements[]?.filePath),
         (.tool_input.edits[]?.file_path) ]
       | map(select(. != null and . != "")) | .[]' <<<"$input")"
@@ -161,7 +165,7 @@ case "$tool" in
     done <<<"$paths"
     ;;
 
-  run_in_terminal | bash | shell)
+  run_in_terminal | bash | shell | Bash)
     cmd="$(jq -r '.tool_input.command // .tool_input.bash // empty' <<<"$input")"
     # History rewrites, merges, and gate bypass are ALWAYS denied — even when
     # fast-forward push is opted in below (this catches `git push --force`).

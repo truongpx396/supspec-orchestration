@@ -34,7 +34,9 @@ by an orchestrator.
 - Planning is already done upstream: this skill starts post-planning and does **not** reopen
   brainstorming, spec-writing, or task breakdown mid-run.
 - Project test commands are known (lint/unit/integration/e2e as applicable).
-- Optional: Copilot agent hooks enabled with a hook file in `.github/hooks/*.json`.
+- Optional: mechanical hooks enabled — Copilot agent hooks (`.github/hooks/*.json`) **or** Claude Code
+  hooks (`.claude/settings.json`). [`scripts/install-hooks.sh`](scripts/install-hooks.sh)`--surface
+  {copilot|claude|both}` wires either; see [references/hooks.md](references/hooks.md#running-under-claude-code).
 
 ### Step 0 — First-run bootstrap (offer, then install on consent)
 
@@ -362,10 +364,14 @@ Invariants this skill asserts; most are *realized by* SDD's loop, not re-run her
 
 The quality gates are only as strong as the worker's compliance — unless you make the **mechanical**
 ones (paths, forbidden commands, counters) enforced. This skill ships the canonical hooks bundle
-([`scripts/track-*.sh`](scripts/) + [`templates/track-hooks.json`](templates/track-hooks.json)),
-wiring Copilot agent hooks to deny out-of-scope edits, lock workers out of push/merge, record test
-evidence, and block completion on an incomplete evidence pack. Each script is opt-in and no-ops until
-its env is set, so dropping the bundle into `.github/hooks/` is safe. Leave *judgement* gates (TDD
+([`scripts/track-*.sh`](scripts/) + a wiring manifest per surface —
+[`templates/track-hooks.json`](templates/track-hooks.json) for Copilot,
+[`templates/claude-settings.json`](templates/claude-settings.json) for Claude Code),
+wiring lifecycle hooks to deny out-of-scope edits, lock workers out of push/merge, record test
+evidence, and block completion on an incomplete evidence pack. The scripts are surface-agnostic and
+run unchanged on both Copilot and Claude Code (see
+[references/hooks.md](references/hooks.md#running-under-claude-code)). Each script is opt-in and
+no-ops until its env is set, so dropping the bundle into `.github/hooks/` is safe. Leave *judgement* gates (TDD
 ordering, maker/checker split, review quality) as prompt instructions — a hook can't tell which
 subagent reasoned about something.
 

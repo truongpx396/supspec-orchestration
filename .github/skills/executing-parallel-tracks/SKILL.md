@@ -214,18 +214,22 @@ exactly one of:
 
 Only `success` opens a PR. The other three write a run record and route to the orchestrator.
 
-## Deterministic enforcement via Copilot agent hooks
+## Deterministic enforcement via agent hooks (Copilot or Claude Code)
 
-The per-branch gates become **mechanical** through Copilot
-[agent hooks](https://docs.github.com/en/copilot/concepts/agents/hooks) — shell commands that run
-at lifecycle points (`PreToolUse`, `PostToolUse`, `SubagentStart`, `SubagentStop`, `Stop`) and can
+The per-branch gates become **mechanical** through agent
+[hooks](https://docs.github.com/en/copilot/concepts/agents/hooks) — shell commands that run
+at lifecycle points (`PreToolUse`, `PostToolUse`, `SubagentStart`/`SubagentStop`, `Stop`) and can
 **block a tool call before it happens**. The hook bundle —
-[`scripts/track-*.sh`](../single-branch-development/scripts/) and
-[`track-hooks.json`](../single-branch-development/templates/track-hooks.json) — is **owned and
-documented by `single-branch-development`** (see its *Hooks* section for what each script enforces,
-the per-event wiring, and the install steps). This orchestrator reuses that *identical* bundle and
-adds only the **parallel-only configuration**: a *different* `TRACK_ALLOWED_PREFIXES` per worktree,
-shared frozen entrypoints, and a fleet-wide tool-call ceiling.
+[`scripts/track-*.sh`](../single-branch-development/scripts/) plus a per-surface wiring manifest
+([`track-hooks.json`](../single-branch-development/templates/track-hooks.json) for Copilot,
+[`claude-settings.json`](../single-branch-development/templates/claude-settings.json) for
+**Claude Code**) — is **owned and documented by `single-branch-development`** (see its *Hooks*
+section and [`references/hooks.md`](../single-branch-development/references/hooks.md#running-under-claude-code)
+for what each script enforces, the per-event wiring, the Claude Code specifics, and the install steps:
+`install-hooks.sh --surface {copilot|claude|both}`). The scripts are surface-agnostic and run
+unchanged on both. This orchestrator reuses that *identical* bundle and adds only the
+**parallel-only configuration**: a *different* `TRACK_ALLOWED_PREFIXES` per worktree, shared frozen
+entrypoints, and a fleet-wide tool-call ceiling.
 
 Wire a gate to a hook only when it is a *mechanical* property (a path, a forbidden command, a
 counter). Leave *judgement* gates — TDD ordering, the maker/checker split, review quality — as

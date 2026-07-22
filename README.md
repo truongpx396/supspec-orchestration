@@ -62,11 +62,11 @@ graph TD
 Before using these skills in your repo:
 
 1. **[SpecKit](https://github.com/github/spec-kit)** installed and a `tasks.md` generated (or equivalent task list).
-2. **[Superpowers](https://github.com/obra/superpowers)** skills catalog installed and discoverable under `.github/skills/`.
+2. **[Superpowers](https://github.com/obra/superpowers)** skills catalog installed and discoverable by your agent — under `.github/skills/` for Copilot, or under `.claude/skills/` (project) / as the Superpowers plugin for **Claude Code** (see [Runs on Copilot and Claude Code](#runs-on-copilot-and-claude-code)).
 3. A Parallel Tracks Orchestrator Manifest at `.github/tracks/manifest.md` for parallel tracks (or let `executing-parallel-tracks` derive one from `tasks.md` and confirm with you at Step 0).
 4. `git` with worktree support; `gh` CLI authenticated; `jq` available.
 5. Docker available if any track runs integration suites.
-6. Copilot [agent hooks](https://docs.github.com/en/copilot/concepts/agents/hooks) enabled in your workspace (optional but recommended — makes scope/evidence gates mechanical rather than prompt-trusted).
+6. Mechanical gates via lifecycle hooks (optional but recommended — makes scope/evidence gates mechanical rather than prompt-trusted): Copilot [agent hooks](https://docs.github.com/en/copilot/concepts/agents/hooks) in `.github/hooks/`, **or** Claude Code [hooks](https://docs.claude.com/en/docs/claude-code/hooks) in `.claude/settings.json`. Both are installed by the same `install-hooks.sh` — pick the surface with `--surface`.
 
 ---
 
@@ -438,7 +438,21 @@ README.md
 ## 🚀 Getting started
 
 ### 1️⃣ Copy skills into your repo
-Copilot discovers skills under `.github/skills/**/SKILL.md`. Copy the `.github/skills/` directories into the target repo, then install the hooks:
+Copy the skill directories into the target repo where **your agent discovers skills**:
+
+- **Copilot** discovers skills under `.github/skills/**/SKILL.md` — copy `.github/skills/` as-is.
+- **Claude Code** discovers skills under `.claude/skills/**/SKILL.md` (project scope). Copy the skill
+  directories there, preserving the tree (the skills cross-reference each other by relative path, e.g.
+  `../executing-parallel-tracks/SKILL.md`):
+  ```bash
+  mkdir -p .claude/skills
+  cp -R .github/skills/single-branch-development .claude/skills/
+  cp -R .github/skills/executing-parallel-tracks .claude/skills/
+  cp -R .github/skills/pr-review-feedback        .claude/skills/
+  ```
+
+Then install the hooks (the `track-*.sh` scripts stay in `.github/hooks/` for both surfaces; only the
+wiring differs):
 
 ```bash
 # dry-run: print what would change
@@ -447,8 +461,12 @@ bash .github/skills/single-branch-development/scripts/install-hooks.sh
 # probe for drift between sources and installed copies
 bash .github/skills/single-branch-development/scripts/install-hooks.sh --check
 
-# sync bundle + gitignore runs/ + seed track-env.base.sh
+# sync bundle + gitignore runs/ + seed track-env.base.sh + wire hooks (default: both surfaces)
 bash .github/skills/single-branch-development/scripts/install-hooks.sh --apply
+
+# wire ONLY Claude Code (.claude/settings.json) or ONLY Copilot (.github/hooks/track-hooks.json)
+bash .github/skills/single-branch-development/scripts/install-hooks.sh --apply --surface claude
+bash .github/skills/single-branch-development/scripts/install-hooks.sh --apply --surface copilot
 ```
 
 The installer auto-detects repo signals (`go.mod`, `pyproject.toml`, `package.json`, `migrations/`) and seeds `track-env.base.sh` — repo-policy vars filled in, task-derived scope left empty so an unedited copy **fails loud**.
@@ -509,7 +527,9 @@ Example value: `*.go:go-test;*.py:py;*.tsx:ts;*.ts:ts;migrations/*:pg-explain`
 | `PREFLIGHT_REQUIRE_GH` | `1` | Require authenticated `gh` CLI at preflight (set `0` on bootstraps without a remote) |
 
 ### 3️⃣ Invoke a skill
-Point Copilot at the task and let the skill drive:
+Point your agent at the task and let the skill drive. On **Copilot**, reference the skill by name; on
+**Claude Code**, invoke it with `/single-branch-development` (or `/executing-parallel-tracks`) or name
+it in the request — Claude Code loads the matching `SKILL.md`:
 
 - *"implement Phase 1 Setup — shared infrastructure (T001–T010a) **using single-branch-development skill**"* → Flow 1 (scaffold)
 - *"implement Phase 3 User Story 1: Ingest knowledge into a searchable library (T035–T056) **using single-branch-development skill**"* → Flow 2 (story/TDD)
@@ -517,6 +537,33 @@ Point Copilot at the task and let the skill drive:
 - *"execute Phase 3 US1, Phase 4 US2, Phase 5 US3 in parallel **using executing-parallel-tracks skill**"* → Flow 4 (parallel)
 
 The worker stops at `gh pr create --draft`. **A human owns the merge.**
+
+---
+
+## Runs on Copilot and Claude Code
+
+The skills and the hook bundle run under **both** GitHub Copilot agents and **Claude Code**. The hook
+`track-*.sh` scripts are surface-agnostic — they already speak Claude Code's hook JSON (`tool_name`,
+snake_case `tool_input.file_path` / `tool_input.command`, `hook_event_name`, `stop_hook_active`,
+`transcript_path`) and emit Claude Code's decisions (`permissionDecision:"deny"` on `PreToolUse`,
+`{decision:"block"}` / `{continue:false}` on `Stop`). Only two things differ per surface:
+
+| | Copilot | Claude Code |
+|---|---|---|
+| **Skill discovery** | `.github/skills/**/SKILL.md` | `.claude/skills/**/SKILL.md` (or the Superpowers plugin) |
+| **Hook wiring** | `.github/hooks/track-hooks.json` | `.claude/settings.json` (`hooks` block) |
+| **Install** | `install-hooks.sh --surface copilot` | `install-hooks.sh --surface claude` |
+| **Governance files** | `.github/instructions/*` auto-injected by `applyTo` | read in-session by the skill's Step 4 (no auto-inject needed) |
+| **Subagent trace** | `SubagentStart` + `SubagentStop` (spawn reason recorded) | `SubagentStop` only (count + heartbeat; no spawn reason) |
+
+**Claude Code setup in one paragraph:** install the [Superpowers](https://github.com/obra/superpowers)
+skills for Claude Code (as a plugin or under `.claude/skills/`) so the referenced skills
+(`subagent-driven-development`, `dispatching-parallel-agents`, `requesting-code-review`,
+`using-git-worktrees`, `verification-before-completion`, …) resolve; copy these three orchestration
+skills into `.claude/skills/` (step 1️⃣ above); then run `install-hooks.sh --apply --surface claude`
+to wire `.claude/settings.json`. See
+[`single-branch-development/references/hooks.md`](.github/skills/single-branch-development/references/hooks.md#running-under-claude-code)
+for the full event/matcher mapping and the two Claude Code deltas.
 
 ### 4️⃣ Self-test the bundle
 
