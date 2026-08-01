@@ -4,10 +4,15 @@
 # record), never from the model's reading of the worktree. Mirrors the workflow-engine
 # pattern (Temporal/Argo replay): rebuild position from a durable log, then move forward.
 #
-# This is advisory and READ-ONLY by default. It prints a JSON report; it does NOT mutate
-# the repo. The skill's Step 0 consumes the report and decides the (reversible) cleanup
-# (git stash of untrusted changes) and which task to resume — the model only ever picks
-# the NEXT not-done task, never judges a task "done". Doneness stays mechanical here.
+# Advisory: it prints a JSON report and does NOT mutate the repo, the tree, or git state.
+# The skill's Step 0 consumes the report and decides the (reversible) cleanup (git stash of
+# untrusted changes) and which task to resume — the model only ever picks the NEXT not-done
+# task, never judges a task "done". Doneness stays mechanical here.
+#
+# The ONE thing it writes is a `last_reconcile` stamp in runs/<RUN_ID>.json (gitignored run
+# state, exactly like every other hook writes). Without it, "did this run re-anchor from
+# durable state, or did the model guess from the worktree?" leaves no artifact at all — and
+# an invariant with no artifact cannot be audited, only hoped for. track-audit.sh reads it.
 #
 # What it computes (all deterministic — no model call):
 #   1. dirty            — is the working tree dirty? Uncommitted edits at startup are
@@ -188,6 +193,23 @@ fi
 gov_present=false
 gov_path="$(printf '%s' "$gov" | jq -r 'if type=="object" then (.path // "") else "" end' 2>/dev/null || true)"
 [ -n "$gov_path" ] && [ -f "$gov_path" ] && gov_present=true
+
+# --- leave the one durable trace that proves this ran -------------------------------
+# Overwritten each time (the question is "did it re-anchor recently", not a history), and
+# best-effort: a failure to stamp must never break the resume report itself.
+if [ -n "${RUNS_DIR:-}" ]; then
+  mkdir -p "$RUNS_DIR" 2>/dev/null || true
+  [ -f "$rec" ] || printf '{"run_id":"%s","v":1,"trace":[],"evidence":[],"tool_calls":0}\n' "$RUN_ID" >"$rec" 2>/dev/null || true
+  if [ -f "$rec" ]; then
+    _rc_tmp="$(mktemp 2>/dev/null || true)"
+    if [ -n "$_rc_tmp" ]; then
+      jq --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg h "$head" \
+         --argjson d "$dirty" --argjson r "$resumable" \
+         '.last_reconcile = {t:$t, head:$h, dirty_worktree:$d, resumable:$r}' \
+         "$rec" >"$_rc_tmp" 2>/dev/null && mv "$_rc_tmp" "$rec" 2>/dev/null || rm -f "$_rc_tmp"
+    fi
+  fi
+fi
 
 jq -nc \
   --arg run_id "$RUN_ID" \

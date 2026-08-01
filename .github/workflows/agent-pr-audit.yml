@@ -1,0 +1,74 @@
+name: agent-pr-audit
+
+# Closes the one gap the agent's own tooling structurally cannot close.
+#
+# track-audit.sh catches a run that missed a step. It cannot catch a run that skipped the
+# BUNDLE — no preflight, no run record, so track-report.sh renders nothing and the PR body
+# is entirely hand-authored. Nothing then flags that the machine-verified half is absent,
+# and a reviewer has to notice an absence. That is the exact failure the skill's own
+# checklist names: "a missing line is indistinguishable from a skipped check."
+#
+# A reporter cannot report on its own absence, so the check has to live outside the agent.
+#
+# SCOPE: agent-authored PRs only, keyed on the `agent-generated` label that both
+# single-branch-development and executing-parallel-tracks attach at `gh pr create`.
+# Human PRs are untouched — a blanket rule here would fail every hand-written PR and be
+# switched off within a week.
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, labeled, unlabeled, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  auto-block-present:
+    if: contains(github.event.pull_request.labels.*.name, 'agent-generated')
+    runs-on: ubuntu-latest
+    steps:
+      - name: PR body carries the machine-rendered Auto block
+        env:
+          # Passed through the environment, never interpolated into the script body —
+          # a PR description is attacker-controlled text, and `${{ }}` inside a run block
+          # is a shell-injection sink.
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          marker='<!-- END track-report auto block -->'
+          if [ -z "${PR_BODY:-}" ]; then
+            echo "::error::This PR is labeled agent-generated but has an EMPTY body."
+            echo "Expected the track-report.sh Auto block (files changed, evidence," \
+                 "discipline audit, run stats). Run:"
+            echo "    bash .github/hooks/track-report.sh"
+            echo "and paste its output into the PR body per templates/pr-body.md."
+            exit 1
+          fi
+          if ! printf '%s' "$PR_BODY" | grep -qF "$marker"; then
+            echo "::error::No track-report Auto block in this agent-generated PR body."
+            echo "Without it there is no machine-verified half: no evidence table, no"
+            echo "discipline audit, no run stats — a reviewer would be taking the whole"
+            echo "pipeline on trust. Generate it with:"
+            echo "    bash .github/hooks/track-report.sh"
+            echo "If the run genuinely had no run record, that itself is the finding:"
+            echo "the bundle was not active, so none of the gates were enforced."
+            exit 1
+          fi
+          echo "✓ Auto block present."
+
+      - name: Discipline audit reported no blocking failure
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          # track-report.sh renders "blocking — this PR should not have been opened" when
+          # track-audit.sh found a FAIL. Opening the PR anyway is the claim-without-backing
+          # this whole bundle exists to prevent, so CI refuses it rather than leaving the
+          # ❌ for a human to spot and wave through.
+          if printf '%s' "$PR_BODY" | grep -qF 'blocking — this PR should not have been opened'; then
+            echo "::error::The embedded discipline audit reports a BLOCKING failure."
+            printf '%s' "$PR_BODY" | grep -E '^\| ❌ \|' || true
+            echo "Resolve each ❌ (every finding carries its remediation in the table"
+            echo "above), re-run track-report.sh, and update the PR body."
+            exit 1
+          fi
+          echo "✓ No blocking audit failure declared in the body."

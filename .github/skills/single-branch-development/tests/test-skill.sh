@@ -37,8 +37,9 @@ NOTE="$SCRIPTS_DIR/track-note.sh"
 SENTINEL="$SCRIPTS_DIR/track-sentinel.sh"
 NOTIFY="$SCRIPTS_DIR/track-notify.sh"
 TOKENS="$SCRIPTS_DIR/track-tokens.sh"
+AUDIT="$SCRIPTS_DIR/track-audit.sh"
 for s in "$GUARD" "$PREFLIGHT" "$RECONCILE" "$EVIDENCE" "$EVIDENCE_GATE" \
-         "$METER" "$TRACE" "$NOTE" "$SENTINEL" "$NOTIFY" "$TOKENS"; do
+         "$METER" "$TRACE" "$NOTE" "$SENTINEL" "$NOTIFY" "$TOKENS" "$AUDIT"; do
   [ -x "$s" ] || chmod +x "$s"
 done
 INSTALL_HOOKS="$SCRIPTS_DIR/install-hooks.sh"
@@ -829,6 +830,184 @@ rm -rf "$NOTE_RUNS"
 # ---------------------------------------------------------------------------
 # SUITE 9c -- track-tokens.sh (opt-in transcript token estimate)
 # ---------------------------------------------------------------------------
+section "track-audit.sh"
+# The audit re-derives discipline invariants from artifacts. Its value depends entirely
+# on catching real violations AND on not inventing PASSes, so both directions are tested.
+AUD_RUNS="$(mktemp -d)"; AUD_GOV="$AUD_RUNS/gov.md"
+printf '# bundle\n## code-review-generic.instructions.md\n' > "$AUD_GOV"
+aud_seed() { # aud_seed <run-id> — a clean, fully-disciplined story run
+  local rid="$1"
+  local sha; sha="$( { if command -v shasum >/dev/null 2>&1; then shasum "$AUD_GOV"; else sha1sum "$AUD_GOV"; fi; } | cut -d' ' -f1)"
+  jq -nc --arg r "$rid" --arg p "$AUD_GOV" --arg s "$sha" \
+    '{run_id:$r, v:1, tool_calls:5,
+      phase:{mode:"story", step:"converge", t:"2026-01-02T00:00:00Z", self_reported:true},
+      phase_log:[{t:"2026-01-01T00:00:00Z",mode:"story",step:"governance"},
+                 {t:"2026-01-01T01:00:00Z",mode:"story",step:"red-batch"},
+                 {t:"2026-01-01T02:00:00Z",mode:"story",step:"red-review"},
+                 {t:"2026-01-01T03:00:00Z",mode:"story",step:"green"},
+                 {t:"2026-01-01T04:00:00Z",mode:"story",step:"converge"}],
+      governance_bundle:{path:$p, sha:$s, t:"2026-01-01T00:00:00Z", self_reported:true},
+      status:"success",
+      trace:[{t:"2026-01-01T00:30:00Z",kind:"subagent",event:"start",agent_id:"a1",agent_type:"maker"},
+             {t:"2026-01-01T00:40:00Z",kind:"subagent",event:"start",agent_id:"a2",agent_type:"reviewer"}],
+      evidence:[{t:"2026-01-01T01:00:00Z",kind:"go-test",cmd:"go test",response:"--- FAIL: TestX\nFAIL\nexit status 1",fingerprint:"fp0"},
+                {t:"2026-01-01T04:00:00Z",kind:"go-test",cmd:"go test",response:"ok example 0.4s PASS all 12 tests passed",fingerprint:"fp1"}]}' \
+    > "$AUD_RUNS/$rid.json"
+}
+aud_json() { RUN_ID="$1" RUNS_DIR="$AUD_RUNS" TRACK_BASE_REF="" bash "$AUDIT" --json 2>/dev/null; }
+aud_verdict() { aud_json "$1" | jq -r --arg c "$2" '.checks[] | select(.id==$c) | .verdict'; }
+
+# A clean run must NOT produce failures — a gate that always fires gets disabled.
+aud_seed clean
+if [ "$(aud_json clean | jq -r '.summary.fail')" = "0" ]; then
+  pass "audit: a disciplined run produces zero FAILs"
+else
+  fail "audit: a disciplined run produces zero FAILs (got $(aud_json clean | jq -c '.checks[]|select(.verdict=="FAIL")'))"
+fi
+[ "$(aud_verdict clean G1)" = "PASS" ] && pass "audit: G1 passes when bundle exists + sha matches" || fail "audit: G1 passes when bundle exists + sha matches"
+[ "$(aud_verdict clean T1)" = "PASS" ] && pass "audit: T1 confirms RED-before-green from evidence[]" || fail "audit: T1 confirms RED-before-green from evidence[]"
+
+# Each violation must be caught.
+aud_seed g1miss; jq '.governance_bundle.path="/nonexistent/gone.md"' "$AUD_RUNS/g1miss.json" > "$AUD_RUNS/t" && mv "$AUD_RUNS/t" "$AUD_RUNS/g1miss.json"
+[ "$(aud_verdict g1miss G1)" = "FAIL" ] && pass "audit: G1 fails when the pinned bundle vanished from disk" || fail "audit: G1 fails when the pinned bundle vanished from disk"
+
+aud_seed g1none; jq 'del(.governance_bundle)' "$AUD_RUNS/g1none.json" > "$AUD_RUNS/t" && mv "$AUD_RUNS/t" "$AUD_RUNS/g1none.json"
+[ "$(aud_verdict g1none G1)" = "FAIL" ] && pass "audit: G1 fails when no bundle was ever pinned" || fail "audit: G1 fails when no bundle was ever pinned"
+
+# G3 — governance must precede the first dispatch. This is the ordering fact that makes
+# "the brief carried the constraints" even possible.
+aud_seed g3bad; jq '.trace[0].t="2025-01-01T00:00:00Z"' "$AUD_RUNS/g3bad.json" > "$AUD_RUNS/t" && mv "$AUD_RUNS/t" "$AUD_RUNS/g3bad.json"
+[ "$(aud_verdict g3bad G3)" = "FAIL" ] && pass "audit: G3 fails when a subagent ran before governance was stamped" || fail "audit: G3 fails when a subagent ran before governance was stamped"
+[ "$(aud_verdict clean G3)" = "PASS" ] && pass "audit: G3 passes when governance precedes the first dispatch" || fail "audit: G3 passes when governance precedes the first dispatch"
+
+aud_seed p1none; jq 'del(.phase) | del(.phase_log)' "$AUD_RUNS/p1none.json" > "$AUD_RUNS/t" && mv "$AUD_RUNS/t" "$AUD_RUNS/p1none.json"
+[ "$(aud_verdict p1none P1)" = "FAIL" ] && pass "audit: P1 fails when no phase was ever stamped" || fail "audit: P1 fails when no phase was ever stamped"
+
+aud_seed p2gap; jq '.phase_log=[{t:"2026-01-01T00:00:00Z",mode:"story",step:"governance"}]' "$AUD_RUNS/p2gap.json" > "$AUD_RUNS/t" && mv "$AUD_RUNS/t" "$AUD_RUNS/p2gap.json"
+[ "$(aud_verdict p2gap P2)" = "WARN" ] && pass "audit: P2 warns when the gate sequence has holes" || fail "audit: P2 warns when the gate sequence has holes"
+
+aud_seed m1one; jq '.trace=[.trace[0]]' "$AUD_RUNS/m1one.json" > "$AUD_RUNS/t" && mv "$AUD_RUNS/t" "$AUD_RUNS/m1one.json"
+[ "$(aud_verdict m1one M1)" = "WARN" ] && pass "audit: M1 warns when one agent may have made and reviewed" || fail "audit: M1 warns when one agent may have made and reviewed"
+
+# T1 — story mode with no failing capture means the tests never ran red.
+aud_seed t1nored; jq '.evidence=[.evidence[1]]' "$AUD_RUNS/t1nored.json" > "$AUD_RUNS/t" && mv "$AUD_RUNS/t" "$AUD_RUNS/t1nored.json"
+[ "$(aud_verdict t1nored T1)" = "WARN" ] && pass "audit: T1 warns when story mode never recorded a RED" || fail "audit: T1 warns when story mode never recorded a RED"
+
+# E1 — the convergence gate: lanes must share one fingerprint.
+aud_seed e1split; jq '.evidence=[{t:"a",kind:"go",cmd:"c",response:"ok all tests passed cleanly here now",fingerprint:"fpA"},{t:"b",kind:"py",cmd:"c",response:"42 passed in 3.1s everything green",fingerprint:"fpB"}]' "$AUD_RUNS/e1split.json" > "$AUD_RUNS/t" && mv "$AUD_RUNS/t" "$AUD_RUNS/e1split.json"
+[ "$(aud_verdict e1split E1)" = "FAIL" ] && pass "audit: E1 fails when lanes never converged on one fingerprint" || fail "audit: E1 fails when lanes never converged on one fingerprint"
+
+# E2 — a truncated PASS satisfies the evidence gate trivially; a short FAIL is normal.
+aud_seed e2short; jq '.evidence=[{t:"a",kind:"go",cmd:"c",response:"ok",fingerprint:"fp1"}]' "$AUD_RUNS/e2short.json" > "$AUD_RUNS/t" && mv "$AUD_RUNS/t" "$AUD_RUNS/e2short.json"
+[ "$(aud_verdict e2short E2)" = "WARN" ] && pass "audit: E2 warns on a suspiciously short PASSING capture" || fail "audit: E2 warns on a suspiciously short PASSING capture"
+aud_seed e2fail; jq '.evidence=[{t:"a",kind:"go",cmd:"c",response:"FAIL",fingerprint:"fp1"}]' "$AUD_RUNS/e2fail.json" > "$AUD_RUNS/t" && mv "$AUD_RUNS/t" "$AUD_RUNS/e2fail.json"
+[ "$(aud_verdict e2fail E2)" = "PASS" ] && pass "audit: E2 does NOT flag a short FAILING capture (it can't fake a pass)" || fail "audit: E2 does NOT flag a short FAILING capture"
+
+aud_seed f1none; jq 'del(.status)' "$AUD_RUNS/f1none.json" > "$AUD_RUNS/t" && mv "$AUD_RUNS/t" "$AUD_RUNS/f1none.json"
+[ "$(aud_verdict f1none F1)" = "WARN" ] && pass "audit: F1 warns when no terminal state was recorded" || fail "audit: F1 warns when no terminal state was recorded"
+
+# --- Isolation & resume (the early bracket) ------------------------------------
+# Before these existed, a run that never isolated and never reconciled audited
+# perfectly clean: every later gate can pass while the work was done on main.
+AUD_ISO="$(mktemp -d)"; ( cd "$AUD_ISO" && git init -q . \
+  && git config user.email t@t && git config user.name t \
+  && echo x > a && git add -A && git commit -qm b >/dev/null 2>&1 \
+  && git branch -M main ) >/dev/null 2>&1
+mkdir -p "$AUD_ISO/runs"
+jq -nc '{run_id:"iso",v:1,tool_calls:1,phase:{mode:"story",step:"green"},
+         phase_log:[{t:"a",mode:"story",step:"governance"}],trace:[],evidence:[]}' \
+  > "$AUD_ISO/runs/iso.json"
+_iso() { ( cd "$AUD_ISO" && RUN_ID=iso RUNS_DIR=runs TRACK_BASE_REF=main \
+           bash "$AUDIT" --json --warn-only 2>/dev/null ) \
+         | jq -r --arg c "$1" '.checks[] | select(.id==$c) | .verdict'; }
+
+[ "$(_iso I1)" = "FAIL" ] \
+  && pass "audit: I1 fails when work was done on the default branch (never isolated)" \
+  || fail "audit: I1 fails when work was done on the default branch (got $(_iso I1))"
+[ "$(_iso I3)" = "WARN" ] \
+  && pass "audit: I3 warns when no reconcile is on record" \
+  || fail "audit: I3 warns when no reconcile is on record"
+
+# A real feature branch clears I1's FAIL but still warns without a linked worktree,
+# because branch-in-place is only the documented fallback.
+( cd "$AUD_ISO" && git checkout -qb feat/x ) >/dev/null 2>&1
+[ "$(_iso I1)" = "WARN" ] \
+  && pass "audit: I1 warns on branch-in-place (no linked worktree)" \
+  || fail "audit: I1 warns on branch-in-place (got $(_iso I1))"
+
+# Breadcrumb drift: the approved branch and the actual branch must agree.
+jq -nc '{run_id:"iso",branch:"some-other-branch",track:"iso"}' > "$AUD_ISO/runs/iso.dispatch"
+[ "$(_iso I2)" = "WARN" ] \
+  && pass "audit: I2 warns when work drifted off the branch approved at preflight" \
+  || fail "audit: I2 warns when work drifted off the approved branch"
+jq -nc '{run_id:"iso",branch:"feat/x",track:"iso"}' > "$AUD_ISO/runs/iso.dispatch"
+[ "$(_iso I2)" = "PASS" ] \
+  && pass "audit: I2 passes when work is on the approved branch" \
+  || fail "audit: I2 passes when work is on the approved branch"
+
+# track-reconcile.sh must leave the durable trace I3 reads — an invariant with no
+# artifact cannot be audited, only hoped for.
+# NOTE: reconcile reads the hook payload from stdin. Its [ -t 0 ] guard only skips that
+# read on an interactive TTY — invoked from a script it will block on `cat` forever, so
+# always feed it a payload (or </dev/null) from a test.
+( cd "$AUD_ISO" && printf '{}' | RUN_ID=iso RUNS_DIR=runs TRACK_BASE_REF=main bash "$RECONCILE" ) >/dev/null 2>&1
+jq -e '.last_reconcile.t | type == "string"' "$AUD_ISO/runs/iso.json" >/dev/null 2>&1 \
+  && pass "reconcile: stamps last_reconcile into the run record" \
+  || fail "reconcile: stamps last_reconcile into the run record"
+[ "$(_iso I3)" = "PASS" ] \
+  && pass "audit: I3 passes once reconcile has run" \
+  || fail "audit: I3 passes once reconcile has run"
+rm -rf "$AUD_ISO"
+
+# Exit codes + the honesty contract.
+RUN_ID=clean RUNS_DIR="$AUD_RUNS" bash "$AUDIT" >/dev/null 2>&1 \
+  && pass "audit: clean run exits 0" || fail "audit: clean run exits 0"
+RUN_ID=g1none RUNS_DIR="$AUD_RUNS" bash "$AUDIT" >/dev/null 2>&1 \
+  && fail "audit: a FAIL exits 2 (blocks)" || pass "audit: a FAIL exits 2 (blocks)"
+RUN_ID=g1none RUNS_DIR="$AUD_RUNS" bash "$AUDIT" --warn-only >/dev/null 2>&1 \
+  && pass "audit: --warn-only reports without blocking" || fail "audit: --warn-only reports without blocking"
+if aud_json clean | jq -e '(.manual | length) >= 5' >/dev/null 2>&1; then
+  pass "audit: publishes its NOT-CHECKED list (never implies a clean bill of health)"
+else
+  fail "audit: publishes its NOT-CHECKED list"
+fi
+
+# Hook mode: opt-in, non-looping, and silent when clean.
+# NOTE: capture output into a variable, never `script | grep -q`. This suite runs with
+# `set -o pipefail`, and grep -q exits on its FIRST match — the still-writing script then
+# takes SIGPIPE and the pipeline reports failure. For a `&& fail || pass` silence check
+# that inverts the result into a false PASS, which is worse than no assertion at all.
+_h() { printf '%s' "$1" | env "${@:2}" bash "$AUDIT" --hook 2>/dev/null || true; }
+
+[ -z "$(_h '{}' RUN_ID=g1none RUNS_DIR="$AUD_RUNS")" ] \
+  && pass "audit: --hook without TRACK_AUDIT is a silent no-op" \
+  || fail "audit: --hook without TRACK_AUDIT is a silent no-op"
+
+_hb="$(_h '{}' RUN_ID=g1none RUNS_DIR="$AUD_RUNS" TRACK_AUDIT=1)"
+printf '%s' "$_hb" | jq -e '.decision == "block" and (.reason | test("G1"))' >/dev/null 2>&1 \
+  && pass "audit: --hook blocks the Stop with the failing ids as the reason" \
+  || fail "audit: --hook blocks the Stop with the failing ids as the reason"
+
+# The block reason must carry the REMEDIATION, not just the finding — a blocked agent
+# needs a next step, otherwise it retries the same thing.
+printf '%s' "$_hb" | jq -e '.reason | test("fix:")' >/dev/null 2>&1 \
+  && pass "audit: --hook block reason includes remediation" \
+  || fail "audit: --hook block reason includes remediation"
+
+[ -z "$(_h '{"stop_hook_active":true}' RUN_ID=g1none RUNS_DIR="$AUD_RUNS" TRACK_AUDIT=1)" ] \
+  && pass "audit: --hook honors stop_hook_active (cannot loop)" \
+  || fail "audit: --hook honors stop_hook_active (cannot loop)"
+
+[ -z "$(_h '{}' RUN_ID=clean RUNS_DIR="$AUD_RUNS" TRACK_AUDIT=1)" ] \
+  && pass "audit: --hook is silent on a clean run" \
+  || fail "audit: --hook is silent on a clean run"
+
+# No RUN_ID anywhere -> writes nothing, says nothing (bundle convention).
+EMPTY_AUD="$(mktemp -d)"
+RUNS_DIR="$EMPTY_AUD" bash "$AUDIT" >/dev/null 2>&1 \
+  && pass "audit: no RUN_ID -> silent no-op" || fail "audit: no RUN_ID -> silent no-op"
+rm -rf "$AUD_RUNS" "$EMPTY_AUD"
+
 section "track-tokens.sh"
 TOK_RUNS="$(mktemp -d)"; TOK_RID="tok-run"
 jq -nc '{"run_id":"'"$TOK_RID"'","v":1,"trace":[],"evidence":[],"tool_calls":0}' \
@@ -1134,6 +1313,69 @@ else
 fi
 rm -rf "$RPT_W"
 
+# 10b.13 — the PR body carries the DISCIPLINE AUDIT.
+# The point of the audit is that a REVIEWER sees it. A gate whose result only ever
+# appeared in the author's terminal is one the reviewer has to take on trust.
+RPT_A="$(mktemp -d)"
+printf '# bundle\n' > "$RPT_A/gov.md"
+_gsha="$( { if command -v shasum >/dev/null 2>&1; then shasum "$RPT_A/gov.md"; else sha1sum "$RPT_A/gov.md"; fi; } | cut -d' ' -f1)"
+jq -nc --arg g "$RPT_A/gov.md" --arg s "$_gsha" \
+  '{run_id:"rpta", v:1, tool_calls:3,
+    phase:{mode:"story", step:"green"},
+    phase_log:[{t:"2026-01-01T00:00:00Z",mode:"story",step:"governance"}],
+    governance_bundle:{path:$g, sha:$s, t:"2026-01-01T00:00:00Z"},
+    trace:[{t:"2026-01-01T01:00:00Z",kind:"subagent",event:"start",agent_id:"a1"}],
+    evidence:[{t:"x",kind:"go",cmd:"go test",response:"ok",fingerprint:"f1"}]}' \
+  > "$RPT_A/rpta.json"
+A_OUT="$(RUN_ID=rpta RUNS_DIR="$RPT_A" bash "$REPORT" 2>/dev/null || true)"
+
+printf '%s' "$A_OUT" | grep -q 'Discipline audit' \
+  && pass "report: PR body includes a Discipline audit section" \
+  || fail "report: PR body includes a Discipline audit section"
+
+# Every finding must carry its remediation — a finding with no next step is noise
+# a reviewer scrolls past.
+if printf '%s' "$A_OUT" | grep -q 'How to clear it' \
+   && printf '%s' "$A_OUT" | grep -q 'track-note.sh phase'; then
+  pass "report: audit findings render with remediation"
+else
+  fail "report: audit findings render with remediation"
+fi
+
+# The honesty rule must survive into the PR: never let a green audit read as full proof.
+if printf '%s' "$A_OUT" | grep -q 'Not checked mechanically' \
+   && printf '%s' "$A_OUT" | grep -q 'necessary, not sufficient'; then
+  pass "report: PR body states what the audit did NOT check"
+else
+  fail "report: PR body states what the audit did NOT check"
+fi
+
+# Markdown safety: a remediation containing a pipe must not break the table.
+if printf '%s' "$A_OUT" | grep -q 'success\\|blocked' \
+   && ! printf '%s' "$A_OUT" | grep -q 'success\\\\|blocked'; then
+  pass "report: pipes inside audit cells are escaped exactly once"
+else
+  fail "report: pipes inside audit cells are escaped exactly once"
+fi
+
+# track-report.sh must stay READ-ONLY even though it now shells out to the audit.
+_before_a="$(md5 -q "$RPT_A/rpta.json" 2>/dev/null || md5sum "$RPT_A/rpta.json" | cut -d' ' -f1)"
+RUN_ID=rpta RUNS_DIR="$RPT_A" bash "$REPORT" >/dev/null 2>&1 || true
+_after_a="$(md5 -q "$RPT_A/rpta.json" 2>/dev/null || md5sum "$RPT_A/rpta.json" | cut -d' ' -f1)"
+[ "$_before_a" = "$_after_a" ] \
+  && pass "report: embedding the audit keeps track-report.sh read-only" \
+  || fail "report: embedding the audit keeps track-report.sh read-only"
+
+# A failing audit must NOT break report rendering — the report is a reporter, not a gate.
+jq 'del(.governance_bundle)' "$RPT_A/rpta.json" > "$RPT_A/t2" && mv "$RPT_A/t2" "$RPT_A/rpta.json"
+A_FAIL_OUT="$(RUN_ID=rpta RUNS_DIR="$RPT_A" bash "$REPORT" 2>/dev/null || true)"
+if printf '%s' "$A_FAIL_OUT" | grep -q 'blocking'; then
+  pass "report: a FAILING audit renders as a blocking notice, not a crash"
+else
+  fail "report: a FAILING audit renders as a blocking notice (got: $(printf '%s' "$A_FAIL_OUT" | grep -A1 'Discipline audit' | tail -1 | head -c 100))"
+fi
+rm -rf "$RPT_A"
+
 # 10b.11/12 — files-changed grouping: many files → area summary + collapsible list;
 #             few files → a plain per-file table (no <details>).
 RPT_G="$(mktemp -d)"
@@ -1282,7 +1524,9 @@ _missing=0
 while IFS= read -r _scr; do
   [ -z "$_scr" ] && continue
   [ -f "$SCRIPTS_DIR/$_scr" ] || _missing=$((_missing+1))
-done < <(jq -r '.. | strings | select(test("track-")) | gsub(".*/"; "")' "$HOOKS_JSON" 2>/dev/null | sort -u)
+# Strip the path prefix AND any trailing arguments — a wiring entry is a command line
+# ("…/track-audit.sh --hook"), not a bare filename.
+done < <(jq -r '.. | strings | select(test("track-.*\\.sh")) | gsub(".*/"; "") | split(" ")[0]' "$HOOKS_JSON" 2>/dev/null | sort -u)
 [ "$_missing" -eq 0 ] \
   && pass "struct: all scripts in track-hooks.json exist in scripts/" \
   || fail "struct: $_missing scripts in track-hooks.json missing from scripts/"
@@ -1435,6 +1679,74 @@ if grep -q 'TRACK_SELF_HEAL_ATTEMPTS' "$ENV_TMPL" 2>/dev/null \
 else
   fail "struct: self-heal cap + token ceiling live in the env preset, not only in prose"
 fi
+
+# 10.26 — the audit is wired on BOTH surfaces and named in the pipeline.
+# A checker nobody invokes is a document, which is the problem it was built to fix.
+CLAUDE_TMPL="$SCRIPT_DIR/../templates/claude-settings.json"
+_wired=1
+jq -e '[.hooks.stop[]?.bash] | map(test("track-audit")) | any' "$HOOKS_JSON" >/dev/null 2>&1 || _wired=0
+jq -e '[.hooks.Stop[]?.hooks[]?.command] | map(test("track-audit")) | any' "$CLAUDE_TMPL" >/dev/null 2>&1 || _wired=0
+[ "$_wired" -eq 1 ] \
+  && pass "struct: track-audit.sh wired into Stop on both Copilot and Claude Code" \
+  || fail "struct: track-audit.sh wired into Stop on both Copilot and Claude Code"
+
+# Both wirings must pass --hook: without it the script runs in CLI mode inside a hook,
+# ignoring TRACK_AUDIT and never emitting the block contract.
+_hookflag=1
+jq -e '[.hooks.stop[]?.bash] | map(select(test("track-audit"))) | all(test("--hook"))' "$HOOKS_JSON" >/dev/null 2>&1 || _hookflag=0
+jq -e '[.hooks.Stop[]?.hooks[]?.command] | map(select(test("track-audit"))) | all(test("--hook"))' "$CLAUDE_TMPL" >/dev/null 2>&1 || _hookflag=0
+[ "$_hookflag" -eq 1 ] \
+  && pass "struct: both wirings invoke track-audit.sh with --hook" \
+  || fail "struct: both wirings invoke track-audit.sh with --hook"
+
+# 10.27 — the audit runs before the PR, and the checklist marks what it covers.
+CHECKLIST="$SCRIPT_DIR/prompt-level-checklist.md"
+if grep -q 'track-audit.sh' "$SKILL_MD" 2>/dev/null \
+   && [ -f "$CHECKLIST" ] \
+   && grep -q 'track-audit.sh' "$CHECKLIST" 2>/dev/null \
+   && grep -q '⚙️' "$CHECKLIST" 2>/dev/null \
+   && grep -q '✋' "$CHECKLIST" 2>/dev/null; then
+  pass "struct: SKILL.md runs the audit; checklist marks automated vs human items"
+else
+  fail "struct: SKILL.md runs the audit; checklist marks automated vs human items"
+fi
+
+# 10.28 — the wholesale-skip gate lives OUTSIDE the agent.
+# track-audit.sh catches a run that missed a step; it cannot catch a run that skipped the
+# bundle, because then there is no record to audit and no Auto block to be missing from.
+# A reporter cannot report on its own absence, so this check must be CI-side.
+# NOTE: $REPO_ROOT resolves to .github/ (it is one level short — harmless for the git
+# operations every other test uses, but wrong for a repo-relative path). Ask git.
+GIT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "$REPO_ROOT/..")"
+AGENT_WF="$GIT_ROOT/.github/workflows/agent-pr-audit.yml"
+if [ -f "$AGENT_WF" ] \
+   && grep -q 'END track-report auto block' "$AGENT_WF" \
+   && grep -q 'agent-generated' "$AGENT_WF" \
+   && grep -q 'blocking — this PR should not have been opened' "$AGENT_WF"; then
+  pass "struct: CI gate asserts the Auto block + no blocking audit on agent PRs"
+else
+  fail "struct: CI gate asserts the Auto block + no blocking audit on agent PRs"
+fi
+
+# Scoped to agent PRs only. A blanket rule would fail every hand-written PR and be
+# switched off within a week — a gate nobody can live with protects nothing.
+grep -q "contains(github.event.pull_request.labels" "$AGENT_WF" 2>/dev/null \
+  && pass "struct: CI gate is scoped to agent-generated PRs (human PRs untouched)" \
+  || fail "struct: CI gate is scoped to agent-generated PRs"
+
+# The PR body is attacker-controlled text: it must reach the script through the
+# environment, never via ${{ }} interpolation inside a run block (shell-injection sink).
+if grep -q 'PR_BODY: \${{ github.event.pull_request.body }}' "$AGENT_WF" 2>/dev/null \
+   && ! grep -E '^\s+(echo|printf|grep).*\$\{\{ github.event.pull_request.body' "$AGENT_WF" >/dev/null 2>&1; then
+  pass "struct: CI gate passes the PR body via env, not inline interpolation"
+else
+  fail "struct: CI gate passes the PR body via env, not inline interpolation"
+fi
+
+# The skill must actually attach the label the gate keys on, or the gate never fires.
+grep -q 'agent-generated' "$SKILL_MD" 2>/dev/null \
+  && pass "struct: SKILL.md labels the PR agent-generated so the CI gate fires" \
+  || fail "struct: SKILL.md labels the PR agent-generated so the CI gate fires"
 
 # 10.25 — SKILL.md body stays within the repo's own 500-line hard maximum
 _skill_lines=$(wc -l < "$SKILL_MD" | tr -d ' ')

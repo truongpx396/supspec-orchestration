@@ -237,6 +237,39 @@ else
   printf -- '- ✅ A code-review activation and at least one evidence row are on record.\n'
 fi
 
+# Discipline audit — the pipeline invariants, re-derived from artifacts by track-audit.sh
+# and reproduced here so a REVIEWER can see them without running anything. A gate whose
+# result only ever appeared in the author's terminal is a gate the reviewer has to take on
+# trust, which is the thing this whole bundle refuses to do.
+# Degrades quietly: an older install without track-audit.sh simply omits the section, and
+# --warn-only keeps a failing audit from breaking report rendering (this script stays
+# read-only and non-blocking; the audit does its own blocking at the Stop gate and Step 8).
+_audit="$(cd "${BASH_SOURCE[0]%/*}" && pwd)/track-audit.sh"
+if [ -f "$_audit" ]; then
+  _aj="$(RUN_ID="$run_id" RUNS_DIR="$RUNS_DIR" bash "$_audit" --json --warn-only 2>/dev/null || true)"
+  if [ -n "$_aj" ] && printf '%s' "$_aj" | jq -e '.summary' >/dev/null 2>&1; then
+    printf '\n#### Discipline audit (`track-audit.sh` — derived from artifacts)\n\n'
+    printf -- '- %s\n' "$(printf '%s' "$_aj" | jq -r '
+      "**\(.summary.pass) passed · \(.summary.warn) warning(s) · \(.summary.fail) failure(s)**"
+      + (if .summary.fail > 0 then "  ❌ **blocking — this PR should not have been opened**"
+         elif .summary.warn > 0 then "  ⚠️ review the warnings below"
+         else "  ✅ every mechanically-checkable invariant holds" end)')"
+    if printf '%s' "$_aj" | jq -e '[.checks[] | select(.verdict != "PASS")] | length > 0' >/dev/null 2>&1; then
+      printf '\n| | Check | Finding | How to clear it |\n|---|---|---|---|\n'
+      printf '%s' "$_aj" | jq -r '
+        .checks[] | select(.verdict != "PASS") |
+        "| \(if .verdict == "FAIL" then "❌" else "⚠️" end) | `\(.id)` | \(.message | gsub("\\|";"\\|")) | \(.remediation | gsub("\\|";"\\|")) |"'
+    fi
+    # The honesty rule carries into the PR: say what was NOT checked, so a green audit is
+    # never mistaken for a full verification.
+    printf '\n<details><summary>Not checked mechanically (%s items — audit by hand)</summary>\n\n' \
+      "$(printf '%s' "$_aj" | jq -r '.manual | length')"
+    printf '%s' "$_aj" | jq -r '.manual[] | "- **\(.id)** — \(.check)"'
+    printf '\n_Full list: `tests/prompt-level-checklist.md`. A clean audit is necessary, not sufficient._\n'
+    printf '</details>\n'
+  fi
+fi
+
 # Mechanical run stats.
 printf '\n#### Run stats (hook-observed)\n\n'
 printf -- '- **Tool calls:** %s\n' "${tool_calls:-0}"

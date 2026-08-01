@@ -8,7 +8,15 @@
              and paste its output where {{AUTO_BLOCK}} sits below (or pipe it in).
              It renders: files changed (grouped by area, with a collapsible full list when the
              diff is large), evidence (fingerprint + pass/fail), a compliance-warnings check,
+             the DISCIPLINE AUDIT (track-audit.sh verdicts — each finding with the remediation
+             that clears it, plus a collapsed list of what it deliberately did NOT check),
              tool_calls, subagent trace, and (fenced off) any self-reported skills/loops.
+
+             The audit section is why a reviewer does not have to take "I followed the
+             pipeline" on trust: governance ordering, phase advance, real RED-before-green,
+             convergence and test-weakening are re-derived from artifacts and shown inline.
+             A ❌ row means this PR should not have been opened — resolve it or say plainly
+             in the Asserted zone why it is waived.
 
   2. ASSERTED — the narrative you (the model) are CLAIMING. This is the only part you
              author by hand. Keep it clearly below the auto block so a reviewer can tell
