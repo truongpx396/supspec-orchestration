@@ -98,6 +98,27 @@ add() { # add <id> <verdict> <message>
 
 j() { jq -r "$1" "$rec" 2>/dev/null || true; }
 
+# Remediation per check id. Kept as a lookup rather than a field on every add() call
+# because the fix depends on WHICH invariant broke, not on the instance. These strings
+# are rendered into the PR body by track-report.sh, so a reviewer seeing a ⚠️ also sees
+# what would clear it — a finding with no next step just becomes noise everyone scrolls past.
+remediation_for() {
+  case "$1" in
+    G1) printf 'Run governance discovery (references/governance.md), write the distilled bundle to runs/<RUN_ID>.governance.md, then: track-note.sh governance <path>' ;;
+    G2) printf 'Read the missing .github/instructions/* file(s) and add their binding constraints to the bundle, then re-pin it.' ;;
+    G3) printf 'Governance must be discovered and pinned BEFORE any subagent is dispatched. Re-run the affected dispatches with the bundle content embedded in each brief.' ;;
+    G4) printf 'Read security-and-owasp.instructions.md, add its relevant constraints to the bundle, and re-review the trust-boundary diff against them.' ;;
+    P1|P2) printf 'Stamp each gate boundary as you cross it: track-note.sh phase <mode> <step>. Without it a compacted session cannot re-anchor.' ;;
+    M1) printf 'The stage-1/stage-2 reviewer must be a subagent distinct from the implementer. Re-review with a fresh agent if one agent did both.' ;;
+    T1) printf 'Story mode requires the RED suite to fail BEFORE implementation. Confirm the tests were authored first; if they were not, this is not TDD.' ;;
+    T2) printf 'Never green a frozen test by weakening it. Restore the assertion / remove the skip, and route a genuinely wrong test back through its review gate.' ;;
+    E1) printf 'Freeze edits, then re-run EVERY required evidence kind back-to-back so all captures share one fingerprint (the convergence gate).' ;;
+    E2) printf 'Re-run the suite and capture the full output. A truncated pass-looking response satisfies the evidence gate without proving anything.' ;;
+    F1) printf 'Record the terminal state before finishing: track-note.sh status <success|blocked|no-progress|budget-exceeded> "<blocker>" "<next step>".' ;;
+    *)  printf '' ;;
+  esac
+}
+
 run_mode="$(j '.phase.mode // ""')"
 run_status="$(j '.status // ""')"
 
@@ -376,20 +397,37 @@ if [ "$hook_mode" -eq 1 ]; then
   # receives something actionable rather than "audit failed". Silent when clean —
   # a passing gate emits no positive marker, same as the evidence gate.
   if [ "$n_fail" -gt 0 ]; then
+    detail=""
+    while IFS="$(printf '\t')" read -r id verdict msg; do
+      [ "${verdict:-}" = "FAIL" ] || continue
+      detail="$detail  - $id: $msg
+    fix: $(remediation_for "$id")
+"
+    done <<<"$results"
     reason="Discipline audit FAILED — do not claim done or open a PR until these are resolved:
-$(printf '%s' "$results" | awk -F'\t' '$2=="FAIL"{printf "  - %s: %s\n", $1, $3}')
-Run 'track-audit.sh' for the full report (including the items it cannot check)."
+${detail}Run 'track-audit.sh' for the full report (including the items it cannot check)."
     jq -nc --arg r "$reason" '{decision:"block", reason:$r}'
   fi
   exit 0
 fi
 
 if [ "$mode_out" = "json" ]; then
-  printf '%s' "$results" | jq -R -s --arg run "$RUN_ID" --arg m "$run_mode" \
+  # Attach remediation to every non-PASS row so consumers (track-report.sh → the PR body)
+  # can show a reviewer what would clear each finding.
+  enriched=""
+  while IFS="$(printf '\t')" read -r id verdict msg; do
+    [ -n "${id:-}" ] || continue
+    fix=""
+    [ "$verdict" != "PASS" ] && fix="$(remediation_for "$id")"
+    enriched="$enriched$id	$verdict	$msg	$fix
+"
+  done <<<"$results"
+  printf '%s' "$enriched" | jq -R -s --arg run "$RUN_ID" --arg m "$run_mode" \
     --argjson p "$n_pass" --argjson w "$n_warn" --argjson f "$n_fail" \
     --arg manual "$MANUAL_ITEMS" '
     {run_id:$run, mode:$m,
-     checks: (split("\n") | map(select(length>0)) | map(split("\t") | {id:.[0], verdict:.[1], message:.[2]})),
+     checks: (split("\n") | map(select(length>0)) | map(split("\t")
+              | {id:.[0], verdict:.[1], message:.[2], remediation:(.[3] // "")})),
      summary:{pass:$p, warn:$w, fail:$f},
      blocked: ($f > 0),
      manual: ($manual | split("\n") | map(select(length>0)) | map(split("|") | {id:.[0], check:.[1]}))}'
@@ -407,6 +445,10 @@ else
         *)    icon="  ? " ;;
       esac
       printf '%s%-4s %s\n' "$icon" "$id" "$msg"
+      if [ "$verdict" != "PASS" ]; then
+        fix="$(remediation_for "$id")"
+        [ -n "$fix" ] && printf '       ↳ fix: %s\n' "$fix"
+      fi
     done <<<"$results"
     printf '\n  NOT CHECKED HERE — the highest-value items no artifact can settle.\n'
     printf '  Full list (12 human-only checks): tests/prompt-level-checklist.md\n'

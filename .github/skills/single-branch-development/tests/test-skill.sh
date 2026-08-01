@@ -920,19 +920,34 @@ else
 fi
 
 # Hook mode: opt-in, non-looping, and silent when clean.
-printf '{}' | RUN_ID=g1none RUNS_DIR="$AUD_RUNS" bash "$AUDIT" --hook 2>/dev/null | grep -q . \
-  && fail "audit: --hook without TRACK_AUDIT is a silent no-op" \
-  || pass "audit: --hook without TRACK_AUDIT is a silent no-op"
-printf '{}' | RUN_ID=g1none RUNS_DIR="$AUD_RUNS" TRACK_AUDIT=1 bash "$AUDIT" --hook 2>/dev/null \
-  | jq -e '.decision == "block" and (.reason | test("G1"))' >/dev/null 2>&1 \
+# NOTE: capture output into a variable, never `script | grep -q`. This suite runs with
+# `set -o pipefail`, and grep -q exits on its FIRST match — the still-writing script then
+# takes SIGPIPE and the pipeline reports failure. For a `&& fail || pass` silence check
+# that inverts the result into a false PASS, which is worse than no assertion at all.
+_h() { printf '%s' "$1" | env "${@:2}" bash "$AUDIT" --hook 2>/dev/null || true; }
+
+[ -z "$(_h '{}' RUN_ID=g1none RUNS_DIR="$AUD_RUNS")" ] \
+  && pass "audit: --hook without TRACK_AUDIT is a silent no-op" \
+  || fail "audit: --hook without TRACK_AUDIT is a silent no-op"
+
+_hb="$(_h '{}' RUN_ID=g1none RUNS_DIR="$AUD_RUNS" TRACK_AUDIT=1)"
+printf '%s' "$_hb" | jq -e '.decision == "block" and (.reason | test("G1"))' >/dev/null 2>&1 \
   && pass "audit: --hook blocks the Stop with the failing ids as the reason" \
   || fail "audit: --hook blocks the Stop with the failing ids as the reason"
-printf '{"stop_hook_active":true}' | RUN_ID=g1none RUNS_DIR="$AUD_RUNS" TRACK_AUDIT=1 bash "$AUDIT" --hook 2>/dev/null | grep -q . \
-  && fail "audit: --hook honors stop_hook_active (cannot loop)" \
-  || pass "audit: --hook honors stop_hook_active (cannot loop)"
-printf '{}' | RUN_ID=clean RUNS_DIR="$AUD_RUNS" TRACK_AUDIT=1 bash "$AUDIT" --hook 2>/dev/null | grep -q . \
-  && fail "audit: --hook is silent on a clean run" \
-  || pass "audit: --hook is silent on a clean run"
+
+# The block reason must carry the REMEDIATION, not just the finding — a blocked agent
+# needs a next step, otherwise it retries the same thing.
+printf '%s' "$_hb" | jq -e '.reason | test("fix:")' >/dev/null 2>&1 \
+  && pass "audit: --hook block reason includes remediation" \
+  || fail "audit: --hook block reason includes remediation"
+
+[ -z "$(_h '{"stop_hook_active":true}' RUN_ID=g1none RUNS_DIR="$AUD_RUNS" TRACK_AUDIT=1)" ] \
+  && pass "audit: --hook honors stop_hook_active (cannot loop)" \
+  || fail "audit: --hook honors stop_hook_active (cannot loop)"
+
+[ -z "$(_h '{}' RUN_ID=clean RUNS_DIR="$AUD_RUNS" TRACK_AUDIT=1)" ] \
+  && pass "audit: --hook is silent on a clean run" \
+  || fail "audit: --hook is silent on a clean run"
 
 # No RUN_ID anywhere -> writes nothing, says nothing (bundle convention).
 EMPTY_AUD="$(mktemp -d)"
@@ -1244,6 +1259,69 @@ else
   fail "report: no compliance warnings when review + evidence are on record"
 fi
 rm -rf "$RPT_W"
+
+# 10b.13 — the PR body carries the DISCIPLINE AUDIT.
+# The point of the audit is that a REVIEWER sees it. A gate whose result only ever
+# appeared in the author's terminal is one the reviewer has to take on trust.
+RPT_A="$(mktemp -d)"
+printf '# bundle\n' > "$RPT_A/gov.md"
+_gsha="$( { if command -v shasum >/dev/null 2>&1; then shasum "$RPT_A/gov.md"; else sha1sum "$RPT_A/gov.md"; fi; } | cut -d' ' -f1)"
+jq -nc --arg g "$RPT_A/gov.md" --arg s "$_gsha" \
+  '{run_id:"rpta", v:1, tool_calls:3,
+    phase:{mode:"story", step:"green"},
+    phase_log:[{t:"2026-01-01T00:00:00Z",mode:"story",step:"governance"}],
+    governance_bundle:{path:$g, sha:$s, t:"2026-01-01T00:00:00Z"},
+    trace:[{t:"2026-01-01T01:00:00Z",kind:"subagent",event:"start",agent_id:"a1"}],
+    evidence:[{t:"x",kind:"go",cmd:"go test",response:"ok",fingerprint:"f1"}]}' \
+  > "$RPT_A/rpta.json"
+A_OUT="$(RUN_ID=rpta RUNS_DIR="$RPT_A" bash "$REPORT" 2>/dev/null || true)"
+
+printf '%s' "$A_OUT" | grep -q 'Discipline audit' \
+  && pass "report: PR body includes a Discipline audit section" \
+  || fail "report: PR body includes a Discipline audit section"
+
+# Every finding must carry its remediation — a finding with no next step is noise
+# a reviewer scrolls past.
+if printf '%s' "$A_OUT" | grep -q 'How to clear it' \
+   && printf '%s' "$A_OUT" | grep -q 'track-note.sh phase'; then
+  pass "report: audit findings render with remediation"
+else
+  fail "report: audit findings render with remediation"
+fi
+
+# The honesty rule must survive into the PR: never let a green audit read as full proof.
+if printf '%s' "$A_OUT" | grep -q 'Not checked mechanically' \
+   && printf '%s' "$A_OUT" | grep -q 'necessary, not sufficient'; then
+  pass "report: PR body states what the audit did NOT check"
+else
+  fail "report: PR body states what the audit did NOT check"
+fi
+
+# Markdown safety: a remediation containing a pipe must not break the table.
+if printf '%s' "$A_OUT" | grep -q 'success\\|blocked' \
+   && ! printf '%s' "$A_OUT" | grep -q 'success\\\\|blocked'; then
+  pass "report: pipes inside audit cells are escaped exactly once"
+else
+  fail "report: pipes inside audit cells are escaped exactly once"
+fi
+
+# track-report.sh must stay READ-ONLY even though it now shells out to the audit.
+_before_a="$(md5 -q "$RPT_A/rpta.json" 2>/dev/null || md5sum "$RPT_A/rpta.json" | cut -d' ' -f1)"
+RUN_ID=rpta RUNS_DIR="$RPT_A" bash "$REPORT" >/dev/null 2>&1 || true
+_after_a="$(md5 -q "$RPT_A/rpta.json" 2>/dev/null || md5sum "$RPT_A/rpta.json" | cut -d' ' -f1)"
+[ "$_before_a" = "$_after_a" ] \
+  && pass "report: embedding the audit keeps track-report.sh read-only" \
+  || fail "report: embedding the audit keeps track-report.sh read-only"
+
+# A failing audit must NOT break report rendering — the report is a reporter, not a gate.
+jq 'del(.governance_bundle)' "$RPT_A/rpta.json" > "$RPT_A/t2" && mv "$RPT_A/t2" "$RPT_A/rpta.json"
+A_FAIL_OUT="$(RUN_ID=rpta RUNS_DIR="$RPT_A" bash "$REPORT" 2>/dev/null || true)"
+if printf '%s' "$A_FAIL_OUT" | grep -q 'blocking'; then
+  pass "report: a FAILING audit renders as a blocking notice, not a crash"
+else
+  fail "report: a FAILING audit renders as a blocking notice (got: $(printf '%s' "$A_FAIL_OUT" | grep -A1 'Discipline audit' | tail -1 | head -c 100))"
+fi
+rm -rf "$RPT_A"
 
 # 10b.11/12 — files-changed grouping: many files → area summary + collapsible list;
 #             few files → a plain per-file table (no <details>).

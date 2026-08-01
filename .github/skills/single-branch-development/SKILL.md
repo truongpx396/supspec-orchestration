@@ -212,8 +212,11 @@ subagent vs ⚙️ script).
    the pipeline's discipline invariants from durable artifacts (was governance pinned and does it
    cover the diff's matched instructions; was it stamped *before* the first subagent; did the phases
    advance; did the RED suite actually run red; did the lanes converge on one fingerprint; was a test
-   weakened). Any ✗ blocks: fix it or the PR is a claim you can't back. Its **NOT CHECKED HERE** list
-   is the honest remainder — those are yours to audit against
+   weakened). Any ✗ blocks: fix it or the PR is a claim you can't back. **`track-report.sh` embeds
+   the audit verdicts into the Auto block automatically** — each finding with the remediation that
+   clears it, and a collapsed list of what it deliberately did *not* check — so the reviewer sees the
+   same evidence you did instead of taking "I followed the pipeline" on trust. The unchecked
+   remainder is yours to audit against
    [`tests/prompt-level-checklist.md`](tests/prompt-level-checklist.md).
    **Never open a draft PR with an unaddressed ⚠️.** Once the PR is open, run `track-preflight.sh --complete` to stamp
    `completed_utc` + `duration_secs` (now − `created_utc`) onto the breadcrumb — write-once, the one
