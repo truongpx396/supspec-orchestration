@@ -9,7 +9,7 @@ counterpart**, for a narrow, explicitly-declared class of work: *mechanical, non
 files with no test obligation and no trust-boundary surface.*
 
 Everything **around** the core is unchanged — the same preflight, isolation, run-log/`RUN_ID`,
-hooks bundle, evidence gate, and draft-PR finish. Only steps 2–5 of the pipeline swap out.
+hooks bundle, governance gate, evidence gate, and draft-PR finish. Only the core gates swap out.
 
 ## Why it exists
 
@@ -54,48 +54,61 @@ story-mode run; the cost of a wrong acceptance is unreviewed security code.
 
 ## Pipeline (scaffold core)
 
-Steps 0/1 (preflight + isolate) and 6 (draft PR) are identical to the universal bracket. Only the
-core differs:
+The preflight/isolate/governance entry and the draft-PR boundary are identical to the universal
+bracket. Only the core differs. **Gates are named, not numbered** — the SKILL body numbers its
+bracket 1–8 and a bare number means different things in the two documents:
 
 ```
-0.  Preflight & isolate branch                                   [reuse: track-preflight.sh]
-1.  GUARD: assert every batched task is non-behavioral            [refuse → story mode]
-2.  FAN-OUT generate — N read-only subagents, one per INDEPENDENT
-    DOMAIN / DISJOINT-FILE CLUSTER (not one-per-file, not
-    one-per-task), each RETURNS its file bodies as strings
-    (no disk writes)                                             [parallel ✅  dispatching-parallel-agents]
-3.  APPLY all returned bodies to the worktree at once             [serial, single writer, instant]
-4.  ONE batch verify against the converged tree:
-    build (all runtimes) + lint + bring-up health check           [serial → verification-before-completion]
-5.  ONE code review over the whole scaffold diff                  [serial → requesting-code-review]
-6.  Draft-PR finish                                              [reuse: overrides finishing-a-development-branch]
+[bracket]   Preflight & isolate branch              [reuse: track-preflight.sh, using-git-worktrees]
+[bracket]   GOVERNANCE GATE — discover, distil,
+            persist runs/<RUN_ID>.governance.md      [reuse: references/governance.md]
+MODE GUARD  assert every batched task is
+            non-behavioral                           [refuse → story mode]
+GENERATE    fan out N read-only subagents, one per
+            INDEPENDENT DOMAIN / DISJOINT-FILE
+            CLUSTER (not one-per-file, not
+            one-per-task); each RETURNS file bodies
+            as strings, no disk writes               [parallel ✅  dispatching-parallel-agents]
+APPLY       controller writes all returned bodies    [serial, single writer, instant]
+REVIEW GATE ONE code review over the whole diff      [serial → requesting-code-review]
+CONVERGENCE freeze, then ONE batch verify against
+   GATE     the converged tree: build (all runtimes)
+            + lint + bring-up health check           [serial → verification-before-completion]
+[bracket]   Draft-PR finish                          [overrides finishing-a-development-branch]
 ```
 
-### Which superpowers skill runs at which step
+### Which superpowers skill runs at which gate
 
-Every step's owning skill is **explicit** — nothing is implied by a `[P]` marker or inferred at
+Every gate's owning skill is **explicit** — nothing is implied by a `[P]` marker or inferred at
 runtime. The two SDD-core skills (`test-driven-development`, `subagent-driven-development`) are
-**deliberately absent**: the Step-1 guard proved the batch is non-behavioral, so there is no
-test-first cycle and no per-task implement↔review loop to run.
+**deliberately absent**: the mode guard proved the batch is non-behavioral, so there is no test-first
+cycle and no per-task implement↔review loop to run.
 
-| Step | Action | Skill ("—" = no skill) | Why this skill / why none |
+| Gate | Action | Skill ("—" = no skill) | Why this skill / why none |
 |---|---|---|---|
-| 0 | Preflight & mint `RUN_ID` | `track-preflight.sh` (this skill's bundle) | Durable run identity + prereq gate — a script, not a superpowers skill |
-| 0 | Isolate branch/worktree | `using-git-worktrees` | Never start on main; one branch, one worktree |
-| 1 | Eligibility guard | — (local refusal guard) | All-or-nothing non-behavioral assertion; routes to story mode on any hit |
-| 2 | Fan-out generation | `dispatching-parallel-agents` | One subagent per independent domain / disjoint-file cluster returns its file bodies in parallel — safe because nothing writes |
-| 3 | Apply bodies | — (controller = single writer) | Collapses N proposals into one tree; serial application, no skill |
-| 4 | Batch evidence | `verification-before-completion` | "Does it work" proof — real build/lint/bring-up output, not assertion |
-| 5 | Whole-diff review | `requesting-code-review` | "Is it correct" proof — quality + governance rubric (constitution hard gate + matched `.github/instructions/*`; no security add-on — guard cleared trust boundaries) |
-| 6 | Draft-PR finish | **overrides** `finishing-a-development-branch` | Worker stops at a draft PR; merge is owned by repo/CI |
+| bracket | Preflight & mint `RUN_ID` | `track-preflight.sh` (this skill's bundle) | Durable run identity + prereq gate — a script, not a superpowers skill |
+| bracket | Isolate branch/worktree | `using-git-worktrees` | Never start on main; one branch, one worktree |
+| bracket | Governance | — (in-session read) | Constitution + matched instructions, distilled and persisted before any brief is built |
+| mode guard | Eligibility | — (local refusal guard) | All-or-nothing non-behavioral assertion; routes to story mode on any hit |
+| generate | Fan-out generation | `dispatching-parallel-agents` | One subagent per independent domain / disjoint-file cluster returns its file bodies in parallel — safe because nothing writes |
+| apply | Apply bodies | — (controller = single writer) | Collapses N proposals into one tree; serial application, no skill |
+| review gate | Whole-diff review | `requesting-code-review` | "Is it correct" proof — quality + governance rubric (constitution hard gate + matched `.github/instructions/*`; no security add-on — guard cleared trust boundaries) |
+| convergence gate | Batch evidence | `verification-before-completion` | "Does it work" proof — real build/lint/bring-up output, not assertion |
+| bracket | Draft-PR finish | **overrides** `finishing-a-development-branch` | Worker stops at a draft PR; merge is owned by repo/CI |
 
-**Steps 4 and 5 are orthogonal and both mandatory.** `verification-before-completion` (Step 4)
-answers *does the scaffold actually build and come up*; `requesting-code-review` (Step 5) answers *is
-the diff correct and well-formed*. Neither substitutes for the other — a scaffold can build cleanly
-yet be wrong, or read well yet never come up. Scaffold mode drops TDD and the two-stage loop, but it
+**Review and verification are orthogonal and both mandatory.** `requesting-code-review` answers *is
+the diff correct and well-formed*; `verification-before-completion` answers *does the scaffold
+actually build and come up*. Neither substitutes for the other — a scaffold can build cleanly yet be
+wrong, or read well yet never come up. Scaffold mode drops TDD and the two-stage loop, but it
 **never** drops either of these two.
 
-### Step 2 — parallel generation is safe because nothing writes
+**Review comes FIRST, then verification** — the same order as the universal bracket, and for the
+same reason: the convergence gate requires every evidence kind to be captured against **one final
+tree**, so any edit after it (including a review-driven fix) invalidates the whole capture and forces
+a re-run. Verifying before reviewing guarantees you pay that cost on every review finding. Freeze,
+then capture.
+
+### GENERATE — parallel generation is safe because nothing writes
 
 The fan-out subagents are **read-only**: each receives its cluster's task text + the relevant
 design-doc context and **returns the file body (or bodies) as text**. They do not touch the git index,
@@ -103,22 +116,21 @@ do not run tests, do not commit. That is why in-session parallelism is safe here
 mode's serial green phase — there is no shared mutable worktree during generation, so none of the
 single-index / whole-tree-fingerprint hazards apply. (See the SKILL Gotcha on in-session fan-out.)
 
-**Each subagent's brief must also carry the governance set** (see the SKILL Step-4 "governance is a
-maker obligation" rule). Along with the cluster's task text and design-doc context, embed: (a) the
+**Each subagent's brief must also carry the governance bundle** (see [`governance.md`](governance.md)). Along with the cluster's task text and design-doc context, embed: (a) the
 relevant **constitution** principles (`.specify/memory/constitution.md`, if present) — e.g. the
 kernel-cannot-import-product rule for a Go cluster; (b) the `.github/instructions/*` that match the
 files the cluster will produce — `go` for a Go cluster, `reactjs`/`state-management` for a frontend
 cluster, `python` for a Python cluster; and (c) `security-and-owasp.instructions.md` for any cluster
 touching a deploy/secrets/network surface (`docker-compose.yml`, a proxy config, a `.env` template).
 (d) **For frontend clusters** (any cluster producing `.tsx`/`.ts`/`.jsx`/`.css` files): also embed the
-relevant design artefacts collected during the SKILL Step-4 discovery — the matching
+relevant design artefacts collected during governance discovery — the matching
 `.stitch/designs/<page>.html` mock and/or the `design-system/` page spec — if those files exist.
 Pass silently if absent. Without these, the subagent generates UI from inference rather than the
 approved design, requiring a separate alignment pass.
 Tell the maker in-brief that these are **binding**: the config it returns must *already* satisfy them
 — pinned image tags (no `:latest`), no committed default credentials (env placeholders with a dev
 fallback), security headers on public-facing proxies, strict type/lint settings, coverage floors that
-match the constitution. Governance discovered only at Step 5 review is a bug you paid a round-trip for
+match the constitution. Governance discovered only at the review gate is a bug you paid a round-trip for
 — it is the exact failure mode that ships hardcoded `POSTGRES_PASSWORD` in a bootstrap PR.
 
 **The fan-out unit is an independent domain (a disjoint-file cluster) — NOT one-per-file, and NOT
@@ -140,22 +152,22 @@ file**. `[P]` tells you tasks *can* run concurrently; the clustering tells you *
 agents* without two of them racing the same path. If you cannot cleanly partition the files, the tasks
 are not disjoint and must not fan out.
 
-### Step 3 — the controller is the only writer
+### APPLY — the controller is the only writer
 
 The controller applies every returned body in one pass. Single writer ⇒ no `.git/index.lock` race,
 deterministic tree. This is the moment the N parallel proposals collapse into **one** tree state.
 
 "The only writer" also means the controller is **only** a writer, never the generator. If you find
-yourself composing file contents from your own reasoning and saving them directly — skipping Step 2's
+yourself composing file contents from your own reasoning and saving them directly — skipping the GENERATE gate's
 read-only subagents because the files are "trivial config" or a subagent-per-file feels heavyweight —
 you have collapsed generate and apply into one role and **dropped the fan-out**. The delegation is the
 discipline, not an optimization to trade away: generation is delegated to the subagents, application
 is the controller's sole job. A converged tree that the controller authored itself is a scaffold-mode
 violation even though it "looks the same."
 
-### Step 3a — generate ONLY the task-declared surface (no speculative structure)
+### APPLY (scope rule) — generate ONLY the task-declared surface, no speculative structure
 
-Both the subagents (Step 2) and the controller (Step 3) are bounded by the **files and directories the
+Both the generating subagents and the applying controller are bounded by the **files and directories the
 batched tasks explicitly name** — nothing more. A scaffold task that says *"create
 `backend-go/{cmd/api,kernel,internal,migrations,tests}`"* declares **those** directories; it does **not**
 license pre-creating the entire downstream architecture (every future `internal/<domain>/{dto,errors,
@@ -166,12 +178,12 @@ front-runs design decisions that belong to those later tasks, and buries the rea
 
 Two rules keep the batch contained:
 
-- **Subagents (Step 2):** return only the files each batched task's text names. Do not invent directories
+- **Subagents (generate):** return only the files each batched task's text names. Do not invent directories
   for tasks outside the batch, and do not "round up" a named parent (`internal/`) to its imagined
   children. If a task genuinely needs an *empty* directory to exist (Git cannot track an empty dir),
   represent it with **exactly one** `.gitkeep` **in that task-named directory only** — never a recursive
   spray across a tree the task did not enumerate.
-- **Controller (Step 3):** before applying, diff the returned path set against the batch's declared
+- **Controller (apply):** before applying, diff the returned path set against the batch's declared
   surface. **Reject or trim any path outside it** — an out-of-scope path is a generation error, not a
   head start. A `.gitkeep` count that dwarfs the number of directories the tasks actually name is the
   tell-tale sign the fan-out over-reached; trim back to the declared surface before committing.
@@ -179,13 +191,13 @@ Two rules keep the batch contained:
 Rule of thumb: the scaffold PR should contain the batch's real files plus the *minimum* set of empty
 directories those tasks name — not a materialized map of the whole future codebase.
 
-### Step 4 — batch evidence via `verification-before-completion` (do NOT skip)
+### CONVERGENCE GATE — batch evidence via `verification-before-completion` (do NOT skip)
 
 Scaffold mode drops per-task TDD and per-task review, but it **keeps one `verification-before-completion`
 capture**. Evidence here is not a TDD artifact — it is the "does this actually work" proof, and it is
 cheap. Without it you can open a PR where a manifest won't resolve, a compose file won't parse, or the
 stack won't come up, and **nobody noticed** because the only check was an LLM reading its own output.
-This step is orthogonal to Step 5's review — see [the skill-per-step map](#which-superpowers-skill-runs-at-which-step):
+This gate is orthogonal to the review gate — see [the map above](#which-superpowers-skill-runs-at-which-gate):
 verification proves the scaffold *works*, review proves it is *correct*, and neither is optional.
 
 The scaffold's Definition of Done is the plan's own **bootstrap checkpoint** — typically some form of
@@ -201,7 +213,7 @@ whole-tree fingerprint is *happy* here because there is a single converged tree,
 one commit. (Contrast story mode, where per-increment captures must each converge on the final tree
 at freeze & verify-all.)
 
-### Step 5 — one review, not two-stage
+### REVIEW GATE — one review, not two-stage
 
 A single `requesting-code-review` pass over the entire scaffold diff replaces SDD's per-task
 stage-1 (spec) + stage-2 (quality) loop. The rubric is **quality + governance** (project

@@ -20,6 +20,12 @@
 #         fresh  = entry exists, fingerprint==current, no failure marker  -> proven done
 #         stale  = entry exists but fingerprint!=current                  -> re-verify
 #         missing= no entry for a diff-required kind                      -> not done
+#   4. PIPELINE POSITION — the last `phase` / `status` / `governance_bundle` the skill
+#      asserted via track-note.sh. Evidence freshness alone cannot answer "which core did
+#      I pick / is the RED suite frozen / which increment am I on / where are my binding
+#      governance excerpts" — so those are replayed here verbatim. Self-reported (the
+#      model's own claim, provenance-tagged in the record) and echoed as such: they steer
+#      the resume, they never substitute for the mechanical evidence verdict.
 #
 # Opt-in / no-op unless RUN_ID is set (matches the rest of the track-*.sh bundle). Honors
 # the same env: RUN_ID, RUNS_DIR, TRACK_REQUIRED_EVIDENCE, TRACK_EVIDENCE_RULES,
@@ -168,6 +174,21 @@ trim() { printf '%s' "$1" | sed 's/^ *//; s/ *$//'; }
 resumable=false
 if [ "$dirty" = false ] && [ -z "$(trim "$missing$stale$failed")" ]; then resumable=true; fi
 
+# --- pipeline position (self-reported via track-note.sh) ----------------------------
+# Replayed verbatim so a compacted/crashed session re-anchors on the phase it actually
+# reached rather than inferring one from the worktree. `null` when never asserted.
+phase="null"; status="null"; gov="null"
+if [ -f "$rec" ]; then
+  phase="$(jq -c '.phase // null' "$rec" 2>/dev/null || echo null)"
+  status="$(jq -c '.status // null' "$rec" 2>/dev/null || echo null)"
+  gov="$(jq -c '.governance_bundle // null' "$rec" 2>/dev/null || echo null)"
+fi
+# A governance bundle that was recorded but has since vanished must not be trusted — the
+# briefs built from it are unreproducible, so say so instead of pointing at a dead path.
+gov_present=false
+gov_path="$(printf '%s' "$gov" | jq -r 'if type=="object" then (.path // "") else "" end' 2>/dev/null || true)"
+[ -n "$gov_path" ] && [ -f "$gov_path" ] && gov_present=true
+
 jq -nc \
   --arg run_id "$RUN_ID" \
   --arg branch "$branch" \
@@ -180,6 +201,10 @@ jq -nc \
   --arg missing "$(trim "$missing")" \
   --arg failed "$(trim "$failed")" \
   --arg rec "$rec" \
+  --argjson phase "$phase" \
+  --argjson status "$status" \
+  --argjson gov "$gov" \
+  --argjson gov_present "$gov_present" \
   '{
      run_id: $run_id, branch: $branch, head: $head, fingerprint: $fp,
      run_record: $rec, dirty_worktree: $dirty, resumable: $resumable,
@@ -189,7 +214,24 @@ jq -nc \
        missing: ($missing | if . == "" then [] else split(" ") end),
        failed:  ($failed  | if . == "" then [] else split(" ") end)
      },
-     note: (if $dirty then "Uncommitted changes are UNTRUSTED — git stash (reversible) before resuming; do not build on them." else "Clean tree — resume from HEAD." end)
+     position: {
+       phase: $phase,
+       status: $status,
+       governance_bundle: $gov,
+       governance_bundle_present: $gov_present,
+       self_reported: true
+     },
+     note: (if $dirty then "Uncommitted changes are UNTRUSTED — git stash (reversible) before resuming; do not build on them." else "Clean tree — resume from HEAD." end),
+     resume_action: (
+       if $status != null and ($status | type) == "string" and $status != "success"
+         then "Run ended in terminal state \"" + $status + "\" — do NOT resume silently; read blocker/next_step in the run record and re-plan."
+       elif $phase == null
+         then "No phase recorded — this run never passed a core-step boundary. Re-enter at the pipeline step matching the evidence verdict above."
+       elif $gov != null and $gov_present == false
+         then "Phase is \"" + ($phase.mode // "?") + "/" + ($phase.step // "?") + "\" but the recorded governance bundle is MISSING from disk — re-run governance discovery before dispatching any subagent."
+       else "Re-enter at phase \"" + ($phase.mode // "?") + "/" + ($phase.step // "?") + "\"; re-read the governance bundle before dispatching any subagent."
+       end
+     )
    }'
 
 exit 0

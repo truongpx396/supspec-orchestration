@@ -2,23 +2,43 @@
 # track-note.sh — SELF-REPORTED run annotations. NOT a hook, NOT mechanically observed.
 #
 # The meter/trace/evidence hooks only record what a PostToolUse/Subagent hook can
-# actually see (tool-call count, subagent spawns, test output). Two things the model
-# knows but no hook can observe are (1) which skill it is currently executing and
-# (2) how many implement→review loops it has run. This CLI lets the skill *assert*
-# those into the run record — so they are the model's own claim, not a verified fact.
+# actually see (tool-call count, subagent spawns, test output). Several things the model
+# knows but no hook can observe are (1) which skill it is currently executing, (2) how
+# many implement→review loops it has run, (3) WHERE IN THE PIPELINE the run currently
+# is, (4) that the run has reached a non-success terminal state, and (5) where the
+# persisted governance bundle lives. This CLI lets the skill *assert* those into the run
+# record — so they are the model's own claim, not a verified fact.
 #
 # To keep that honest, everything written here is provenance-tagged:
 #   - skills[] entries carry  self_reported:true
 #   - the loop counter lives in  iterations  and a mirror  iterations_self_reported:true
 #     flag is set the first time it is touched, so a reader can never mistake either
 #     array/scalar for hook-observed truth.
+#   - phase / status / governance_bundle each carry  self_reported:true  inside the object.
+#
+# WHY phase/status/governance EXIST (the compaction problem)
+#   A long run gets its context compacted mid-flight. Compaction is NOT a new session, so
+#   SessionStart (and therefore track-reconcile.sh) does not fire, and the model silently
+#   loses: which execution core it chose, whether the RED suite is frozen, which increment
+#   it was on, and the governance excerpts it must embed in every subagent brief.
+#   Evidence freshness cannot recover any of that — it only says which test kinds are
+#   current. These three subcommands put that position in a FILE, so a compacted (or
+#   crashed) session re-anchors from durable state instead of re-reading the worktree,
+#   which the skill's own resume invariant forbids.
 #
 # Wire it from the SKILL prompt (not track-hooks.json): call `note skill …` at the top
-# of each core step, and `note loop …` once per RED→GREEN→review cycle.
+# of each core step, `note loop …` once per RED→GREEN→review cycle, `note phase …` at
+# EVERY pipeline-step boundary (mandatory — it is the resume anchor), `note governance …`
+# once the bundle is persisted, and `note status …` on any non-success terminal state.
 #
 # Usage (no-op unless RUN_ID is set):
-#   track-note.sh skill <name> [step]   append {t, skill, step, self_reported:true} to skills[]
-#   track-note.sh loop  [phase]         iterations += 1  (+ optional phase label on the mark)
+#   track-note.sh skill <name> [step]        append {t, skill, step, self_reported:true} to skills[]
+#   track-note.sh loop  [phase]              iterations += 1  (+ optional phase label on the mark)
+#   track-note.sh phase <mode> <step>        SET phase={mode,step,t} (overwritten) + append phase_log[]
+#   track-note.sh governance <file>          SET governance_bundle={path,sha,t} — the persisted bundle
+#   track-note.sh status <state> [blocker] [next_step]
+#                                            SET status (+ blocker/next_step). state must be one of
+#                                            success | blocked | no-progress | budget-exceeded
 #
 # Opt-in via env:
 #   RUN_ID    stable run-id for this worker  (REQUIRED — no-op when unset)
@@ -70,9 +90,58 @@ case "$sub" in
        | .started_ts = (.started_ts // $t) | .last_ts = $t' \
       "$rec" >"$tmp" && mv "$tmp" "$rec"
     ;;
+  phase)
+    # DURABLE PIPELINE POSITION — the compaction/crash re-anchor. `phase` is a single
+    # object that is OVERWRITTEN each call (the answer to "where am I now?"), while
+    # phase_log[] keeps the append-only history (the answer to "how did I get here?").
+    # Both are needed: reconcile reads the scalar, an auditor reads the log.
+    mode="${2:-}"
+    step="${3:-}"
+    [ -n "$mode" ] && [ -n "$step" ] \
+      || { printf '%s\n' "track-note: 'phase' needs <mode> <step> (e.g. story red-review)." >&2; rm -f "$tmp"; exit 2; }
+    jq --arg t "$ts" --arg m "$mode" --arg s "$step" \
+      '.phase = {mode:$m, step:$s, t:$t, self_reported:true}
+       | .phase_log = ((.phase_log // []) + [{t:$t, mode:$m, step:$s}])
+       | .started_ts = (.started_ts // $t) | .last_ts = $t' \
+      "$rec" >"$tmp" && mv "$tmp" "$rec"
+    ;;
+  governance)
+    # Pin the PERSISTED governance bundle so a compacted session can re-read the binding
+    # constraints from disk instead of from a context window that no longer holds them.
+    # The sha lets a reader tell whether the bundle changed after briefs were built.
+    file="${2:-}"
+    [ -n "$file" ] || { printf '%s\n' "track-note: 'governance' needs a file path." >&2; rm -f "$tmp"; exit 2; }
+    [ -f "$file" ] || { printf '%s\n' "track-note: governance bundle '$file' does not exist — persist it first." >&2; rm -f "$tmp"; exit 2; }
+    sha="$( { if command -v shasum >/dev/null 2>&1; then shasum "$file"; else sha1sum "$file"; fi; } | cut -d' ' -f1)"
+    jq --arg t "$ts" --arg p "$file" --arg sha "$sha" \
+      '.governance_bundle = {path:$p, sha:$sha, t:$t, self_reported:true}
+       | .started_ts = (.started_ts // $t) | .last_ts = $t' \
+      "$rec" >"$tmp" && mv "$tmp" "$rec"
+    ;;
+  status)
+    # TERMINAL STATE. Blocked/exhausted runs are not successes — naming them in the record
+    # is what stops a worker dressing one up as done. Constrained to the same four states
+    # executing-parallel-tracks routes on, so a solo run and a fleet worker report alike.
+    # NOTE: track-meter.sh (no-progress) and track-tokens.sh (budget-exceeded) also write
+    # `status` mechanically; this is the model-asserted path for the states no hook sees.
+    state="${2:-}"
+    case "$state" in
+      success|blocked|no-progress|budget-exceeded) ;;
+      *) printf '%s\n' "track-note: 'status' needs one of: success | blocked | no-progress | budget-exceeded (got '${state:-<none>}')." >&2; rm -f "$tmp"; exit 2 ;;
+    esac
+    blocker="${3:-}"
+    next_step="${4:-}"
+    jq --arg t "$ts" --arg s "$state" --arg b "$blocker" --arg n "$next_step" \
+      '.status = $s
+       | .status_self_reported = true
+       | (if $b != "" then .blocker = $b else . end)
+       | (if $n != "" then .next_step = $n else . end)
+       | .started_ts = (.started_ts // $t) | .last_ts = $t' \
+      "$rec" >"$tmp" && mv "$tmp" "$rec"
+    ;;
   *)
     rm -f "$tmp"
-    printf '%s\n' "track-note: unknown subcommand '${sub:-<none>}' (want: skill | loop)." >&2
+    printf '%s\n' "track-note: unknown subcommand '${sub:-<none>}' (want: skill | loop | phase | governance | status)." >&2
     exit 2
     ;;
 esac

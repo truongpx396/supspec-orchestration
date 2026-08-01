@@ -1,0 +1,66 @@
+name: skill-tests
+
+# The hooks bundle IS the mechanical half of these skills' quality gates — a silent
+# regression in track-guard.sh or track-evidence-gate.sh means every run that trusts it
+# executes ungated. Both suites are pure bash + jq + git and finish in seconds, so there
+# is no reason for them to be run-by-hand-and-remember.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The suites diff against a base ref and create a temp branch; a shallow
+          # clone leaves them without the history to do either.
+          fetch-depth: 0
+
+      - name: Install jq
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq jq
+
+      - name: Configure git identity
+        # Both suites commit to a temp branch to exercise the fingerprint/diff paths.
+        run: |
+          git config user.email "skill-tests@ci.local"
+          git config user.name  "skill-tests"
+
+      - name: single-branch-development suite
+        run: bash .github/skills/single-branch-development/tests/test-skill.sh
+
+      - name: executing-parallel-tracks suite
+        run: bash .github/skills/executing-parallel-tracks/tests/test-skill.sh
+
+      - name: Hook scripts parse cleanly
+        # `bash -n` catches a syntax error that a suite might not reach — a hook that
+        # cannot parse fails OPEN on some surfaces (the gate silently does nothing).
+        run: |
+          fail=0
+          for s in .github/skills/*/scripts/*.sh; do
+            bash -n "$s" || { echo "::error file=$s::syntax error"; fail=1; }
+          done
+          exit $fail
+
+      - name: SKILL.md bodies stay within the 500-line hard maximum
+        # The repo's own standard (.github/instructions/agent-skills.instructions.md):
+        # split into references/ at ~200 lines, 500 is the hard maximum. A skill body
+        # that grows past it is one whose middle stops getting read.
+        run: |
+          fail=0
+          for f in .github/skills/*/SKILL.md; do
+            n=$(wc -l < "$f" | tr -d ' ')
+            if [ "$n" -gt 500 ]; then
+              echo "::error file=$f::SKILL.md is $n lines (hard max 500) — split into references/"
+              fail=1
+            else
+              echo "ok: $f ($n lines)"
+            fi
+          done
+          exit $fail

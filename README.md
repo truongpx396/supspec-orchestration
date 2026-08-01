@@ -211,7 +211,7 @@ Scripts are listed in the order they typically fire across a track's lifetime:
 | `track-evidence.sh` *(per-track)* | `PostToolUse` | **Evidence & quality** | 📸 Capture test output + code fingerprint — what the tool saw, not a model claim |
 | `track-meter.sh` *(repo-policy)* | `PostToolUse` | **Governance** | 🔢 Count tool calls + heartbeat; hard-stop at `TRACK_MAX_TOOL_CALLS` |
 | `track-trace.sh` *(per-track)* | `SubagentStart/Stop` | **Observability** | 🔍 Record **why** each subagent was spawned (`agent_description`) + stop reason |
-| `track-note.sh` *(per-track)* | skill-invoked (each core step) | **Observability** | 📝 Self-report ordered skill activations + loop counts (model-claim provenance tag) |
+| `track-note.sh` *(per-track)* | skill-invoked (each gate boundary) | **Observability** | 📝 `phase` + `governance` (**mandatory** — the compaction/crash re-anchor), `status` (terminal state), `skill`/`loop` (optional trace). All tagged as model-claim |
 | `track-sentinel.sh` *(repo-policy)* | `Stop` | **Scope & guard** | 🔒 Scan staged diff for likely secrets / debug leftovers before handoff |
 | `track-evidence-gate.sh` *(repo-policy)* | `Stop` | **Evidence & quality** | 🚦 Block stop unless evidence is present, **fresh** (fingerprint matches tree), and passing |
 | `track-tokens.sh` *(repo-policy)* | `Stop` | **Governance** | 🪙 Estimate token usage; enforce `TRACK_MAX_TOKEN_ESTIMATE` ceiling (blocks stop + writes `status=budget-exceeded`) |
@@ -345,16 +345,20 @@ runs/2026-07-20T11-30_wave1_us3.json
 
 ---
 
-**`status` values** — written by hooks, never by the model:
+**`status` values** — the four terminal states. **Only `success` opens a PR**; the other three write a run record and route to the orchestrator (or the human, on a solo run).
 
-| Status | Set when | Hook responsible |
-|---|---|---|
-| `success` | All evidence gates pass and run ends cleanly | `track-evidence-gate.sh` |
-| `blocked` | A hard dependency is unresolvable (e.g. ownership collision, preflight fail) | `track-preflight.sh` / worker |
-| `no-progress` | Tool-call ceiling reached with no forward movement | `track-meter.sh` |
-| `budget-exceeded` | Token-estimate ceiling reached (`TRACK_MAX_TOKEN_ESTIMATE`) | `track-tokens.sh` |
+| Status | Set when | Written by | Provenance |
+|---|---|---|---|
+| `success` | Every gate passed, evidence pasted, draft PR opened | the skill, via `track-note.sh status` | model-asserted |
+| `blocked` | A failure survived `TRACK_SELF_HEAL_ATTEMPTS` retries | the skill, via `track-note.sh status` | model-asserted |
+| `no-progress` | Tool-call ceiling reached | `track-meter.sh` | 🔒 hook-observed |
+| `budget-exceeded` | Token-estimate ceiling reached (`TRACK_MAX_TOKEN_ESTIMATE`) | `track-tokens.sh` | 🔒 hook-observed |
 
-`trace[]` = hook-observed subagent events (mechanical facts). `skills[]` = model's self-reported activations (provenance-tagged). Never mix them.
+Note the split: only the two *ceiling* states are mechanical. `blocked` in particular is something **no hook can observe** — which is precisely why the skill must write it rather than quietly opening a PR anyway. A blocked run that leaves no `status` is indistinguishable from one nobody ran.
+
+**Two provenance classes, never mixed.** `trace[]` is hook-observed fact (subagent boundaries). Everything from `track-note.sh` — `phase`, `governance_bundle`, `status`, `skills[]`, `iterations` — is the model's own claim, tagged `self_reported: true` for exactly that reason.
+
+**Position fields** (`phase`, `governance_bundle`) are what let a run survive a **context compaction**. Compaction happens inside a live session, so no `SessionStart` fires and `track-reconcile.sh` never re-runs — anything held only in the conversation is simply gone, starting with the governance excerpts every subagent brief depends on. Stamping `phase` at each boundary and persisting the bundle to `runs/<RUN_ID>.governance.md` puts that state in files, so `track-reconcile.sh` can hand back a `resume_action` instead of the model guessing from the worktree.
 
 **PR body** (`templates/pr-body.md`). Two-zone template:
 

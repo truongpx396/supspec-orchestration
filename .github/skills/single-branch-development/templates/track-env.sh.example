@@ -68,7 +68,15 @@ export TRACK_BASE_REF="${TRACK_BASE_REF:-origin/main}"               # [REPO-POL
 
 # --- ceilings / hardening ----------------------------------------------------
 export TRACK_MAX_TOOL_CALLS="${TRACK_MAX_TOOL_CALLS:-200}"           # [REPO-POLICY] tool-call hard stop
+export TRACK_MAX_TOKEN_ESTIMATE="${TRACK_MAX_TOKEN_ESTIMATE:-200000}" # [REPO-POLICY] Stop: chars÷4 transcript estimate ceiling; blocks the stop + writes status:budget-exceeded on trip. 0 disables. UNDERCOUNTS (blind to system prompt + cached tokens) — treat as a guard rail, not billing.
 export TRACK_SENTINEL="${TRACK_SENTINEL:-1}"                         # [REPO-POLICY] Stop: scan staged diff for secrets/leftovers (unset to disable)
+# [REPO-POLICY] Self-heal cap: how many times the controller may retry ONE distinct
+# failure before halting the run `blocked` (via `track-note.sh status blocked …`) instead
+# of thrashing. PROMPT-ENFORCED — no hook can count review rounds, so this var exists to
+# give the number a durable, auditable home rather than living only in the model's head
+# where a context compaction erases it. Distinct from the orchestrator's no-progress
+# detector, which counts STALLED PASSES; this counts FIX ATTEMPTS.
+export TRACK_SELF_HEAL_ATTEMPTS="${TRACK_SELF_HEAL_ATTEMPTS:-2}"
 
 # --- notify (optional) -------------------------------------------------------
 export TRACK_NOTIFY_WEBHOOK="${TRACK_NOTIFY_WEBHOOK:-}"              # [REPO-POLICY] Slack/Discord/generic webhook for terminal state; empty = no notify
