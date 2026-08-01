@@ -213,6 +213,7 @@ Scripts are listed in the order they typically fire across a track's lifetime:
 | `track-trace.sh` *(per-track)* | `SubagentStart/Stop` | **Observability** | 🔍 Record **why** each subagent was spawned (`agent_description`) + stop reason |
 | `track-note.sh` *(per-track)* | skill-invoked (each gate boundary) | **Observability** | 📝 `phase` + `governance` (**mandatory** — the compaction/crash re-anchor), `status` (terminal state), `skill`/`loop` (optional trace). All tagged as model-claim |
 | `track-sentinel.sh` *(repo-policy)* | `Stop` | **Scope & guard** | 🔒 Scan staged diff for likely secrets / debug leftovers before handoff |
+| `track-audit.sh` *(per-track)* | skill-invoked (before PR) + `Stop` *(opt-in)* | **Evidence & quality** | 🔎 Re-derive the **discipline** invariants from artifacts: governance ordering + coverage, phase advance, real RED-before-green, convergence, test weakening. Prints what it *cannot* check |
 | `track-evidence-gate.sh` *(repo-policy)* | `Stop` | **Evidence & quality** | 🚦 Block stop unless evidence is present, **fresh** (fingerprint matches tree), and passing |
 | `track-tokens.sh` *(repo-policy)* | `Stop` | **Governance** | 🪙 Estimate token usage; enforce `TRACK_MAX_TOKEN_ESTIMATE` ceiling (blocks stop + writes `status=budget-exceeded`) |
 | `track-notify.sh` *(repo-policy)* | `Stop` | **Lifecycle** | 📣 Best-effort completion webhook |

@@ -76,6 +76,11 @@
           },
           {
             "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.github/hooks/track-audit.sh --hook",
+            "timeout": 8
+          },
+          {
+            "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR\"/.github/hooks/track-notify.sh",
             "timeout": 6
           }

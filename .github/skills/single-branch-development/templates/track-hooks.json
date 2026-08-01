@@ -59,6 +59,11 @@
       },
       {
         "type": "command",
+        "bash": "./.github/hooks/track-audit.sh --hook",
+        "timeoutSec": 8
+      },
+      {
+        "type": "command",
         "bash": "./.github/hooks/track-notify.sh",
         "timeoutSec": 6
       }
