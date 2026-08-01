@@ -32,6 +32,20 @@ instead of a fresh draft PR.
 - The `single-branch-development` hooks bundle installed in `.github/hooks/` (this skill ships **no**
   hooks of its own — see [Hooks](#hooks-reused-not-owned)).
 
+## Run ledger (do this first)
+
+Rework runs long — a big review batch means many fix→re-review cycles — so the same
+[compaction discipline](../single-branch-development/SKILL.md#run-ledger-do-this-first-keep-it-current)
+applies here. Two habits:
+
+1. **Open a TODO list with one item per accepted comment**, plus the pipeline steps. The triage
+   verdict (accept / reject-with-rationale / clarify) for each comment is a *decision you must not
+   lose* — a compaction that eats it silently converts a reasoned rejection into an unaddressed
+   thread. Record verdicts in the list, not just in your head.
+2. **Stamp boundaries** with `track-note.sh phase rework <step>` (`triage` → `fix` → `re-review` →
+   `re-evidence` → `update`), and halt with `track-note.sh status blocked "<why>"` rather than pushing
+   a partial rework. `track-reconcile.sh` replays both on resume.
+
 ## Pipeline
 
 The bracket is the **resume half** of `single-branch-development`: no fresh mint, no isolate. The core
@@ -52,8 +66,11 @@ is triage → fix-under-test → re-evidence → update.
      subagent returns a file body; controller lands them serially).
    - **Non-behavioral fix** (rename, comment, config) → apply directly; no test.
 4. **Re-review the delta** (`requesting-code-review`) — a fresh two-stage pass over the fix diff
-   (stage-1 spec/comment-resolution, stage-2 quality); apply `security-and-owasp.instructions.md` for
-   any trust-boundary change. A review fix **invalidates prior green** — earlier evidence is now stale.
+   (stage-1 spec/comment-resolution, stage-2 quality), applying the **governance bundle** for the
+   changed surface (see
+   [`governance.md`](../single-branch-development/references/governance.md); a rework diff is governed
+   exactly like a fresh one) plus `security-and-owasp.instructions.md` on any trust-boundary change.
+   A review fix **invalidates prior green** — earlier evidence is now stale.
 5. **Converge & re-capture evidence** (`verification-before-completion`) — make no further edits, then
    re-run **every** required evidence kind so all captures share the new post-fix fingerprint. The
    evidence gate blocks on stale/missing lanes; paste real output.
@@ -118,6 +135,14 @@ for the full bundle, env reference, and what the run record captures.
   add the test; don't `skip` or loosen an existing assertion to make CI green.
 - **Set `TRACK_BASE_REF` or the gate under-selects.** Without it the diff-vs-HEAD on a committed rework
   is empty, so the gate requires nothing and silently passes (same trap as the base skill).
+- **A rework that can't finish is `blocked`, not a quiet partial push.** If a comment needs a decision
+  you can't make, or a fix survives `TRACK_SELF_HEAL_ATTEMPTS`, write
+  `track-note.sh status blocked "<why>" "<next step>"` and hand back — the same four terminal states
+  the base skill defines. Pushing half a rework and replying "addressed" to the rest is the failure
+  the triage step exists to prevent.
+- **Triage verdicts are durable state.** A compaction mid-rework drops the reasoning behind every
+  "reject with rationale" — and an unrecorded rejection reads as an ignored comment to the reviewer.
+  Keep them in the ledger.
 
 ## References
 

@@ -69,23 +69,28 @@ Route away if:
 
 ## Pipeline (refactor core)
 
-Steps 0 (preflight + isolate) and 5 (draft PR) are identical to the universal bracket. The core is a
-**pin-green → characterize → incremental keep-green transform → converge** sequence:
+The preflight/isolate/governance entry and the draft-PR boundary are identical to the universal
+bracket. The core is a **pin-green → characterize → incremental keep-green transform → converge**
+sequence. **Gates are named, not numbered** — the SKILL body numbers its bracket 1–8, so a bare
+number means different things in the two documents:
 
 ```
-0.  Preflight & isolate branch                                   [reuse: track-preflight.sh, using-git-worktrees]
-1.  GUARD: confirm the change is behavior-preserving (no new/
-    changed behavior, no contract change, no new trust boundary)  [adds behavior? → story mode; bootstrap? → scaffold]
-2.  PIN GREEN + CHARACTERIZE: run the existing suite over the
-    surface, confirm GREEN; where coverage is thin, author
-    characterization tests that MUST PASS immediately, then
-    review and FREEZE the safety net                              [gen fans out ✅ dispatching-parallel-agents + requesting-code-review]
-3.  TRANSFORM (incremental keep-green): apply the refactor in
-    small reviewable steps; the WHOLE suite stays green after
-    EVERY step; per-step stage-1/stage-2 (+ security) review      [serial → subagent-driven-development]
-4.  CONVERGE & verify-all: freeze, run the whole suite + every
-    evidence kind on ONE fingerprint; confirm contract unchanged  [serial → verification-before-completion]
-5.  Draft-PR finish                                             [reuse: overrides finishing-a-development-branch]
+[bracket]     Preflight & isolate branch                  [reuse: track-preflight.sh, using-git-worktrees]
+[bracket]     GOVERNANCE GATE — discover, distil, persist
+              runs/<RUN_ID>.governance.md                 [reuse: references/governance.md]
+MODE GUARD    confirm the change is behavior-preserving
+              (no new/changed behavior, no contract
+              change, no new trust boundary)              [adds behavior? → story; bootstrap? → scaffold]
+PIN-GREEN     run the existing suite over the surface,
+   GATE       confirm GREEN; where coverage is thin author
+              characterization tests that MUST PASS
+              immediately, then review + FREEZE the net   [gen fans out ✅ dispatching-parallel-agents + requesting-code-review]
+TRANSFORM     apply the refactor in small reviewable
+(incremental) steps; the WHOLE suite stays green after
+              EVERY step; per-step stage-1/2 (+ security) [serial → subagent-driven-development]
+CONVERGENCE   freeze, run the whole suite + every evidence
+   GATE       kind on ONE fingerprint; contract unchanged [serial → verification-before-completion]
+[bracket]     Draft-PR finish                             [overrides finishing-a-development-branch]
 ```
 
 ### Which superpowers skill runs at which step
@@ -99,7 +104,7 @@ Steps 0 (preflight + isolate) and 5 (draft PR) are identical to the universal br
 | 4 | Converge & verify-all | `verification-before-completion` | Whole suite green + all evidence kinds on one fingerprint; contract diff confirmed empty |
 | 5 | Draft-PR finish | **overrides** `finishing-a-development-branch` | Worker stops at a draft PR; merge owned by repo/CI |
 
-### Step 2 — pin green, then characterize (the mirror of the RED batch)
+### PIN-GREEN GATE — pin green, then characterize (the mirror of the RED batch)
 
 Two sub-steps, in order:
 
@@ -115,13 +120,14 @@ Two sub-steps, in order:
 
 Generation fans out exactly like scaffold/story RED: N read-only subagents each return one test file
 body as text; the controller (single writer) applies them. **Each characterization-author subagent's
-brief carries the governance set** (see the SKILL Step-4 "governance is a maker obligation" rule) — the
+brief carries the governance bundle** (see [`governance.md`](governance.md); re-read it from
+`runs/<RUN_ID>.governance.md`, never from memory) — the
 relevant constitution principles, the matching `.github/instructions/*`, and
 `security-and-owasp.instructions.md` for any trust-boundary surface being restructured — so the frozen
 safety net pins down the governed behavior, not just the happy path. Then the safety net gets a full
 `requesting-code-review` pass (re-applying the same governance as the checker) and is **frozen**.
 
-### Step 3 — transform incrementally, and never go red
+### TRANSFORM — incrementally, and never go red
 
 Apply the refactor in **small reviewable steps**, and after **every** step the whole suite is green.
 The keep-green invariant is the entire safety mechanism:
@@ -144,7 +150,7 @@ access-filter code can silently change enforcement even when tests pass, so re-a
 `security-and-owasp.instructions.md`).
 
 **When invoking `subagent-driven-development`, explicitly carry the governance bundle** (constitution
-excerpts + matched `instructions/*` content) that you collected at Step 4's pre-code gate into
+excerpts + matched `instructions/*` content, re-read from `runs/<RUN_ID>.governance.md`) into
 SDD's per-task maker subagent briefs. Subagents have isolated context — they will not see VS Code's
 injected instructions unless the brief includes the content. Each per-task maker must satisfy the
 constitution + matched instructions *while restructuring*, not just satisfy them at review.
@@ -157,7 +163,7 @@ Why incremental rather than one big transform:
   200-line restructure dump.
 - **Reversibility.** A green-between-every-step history means any step can be reverted cleanly.
 
-### Step 4 — converge on one fingerprint + confirm the contract is unchanged
+### CONVERGENCE GATE — converge on one fingerprint + confirm the contract is unchanged
 
 Identical to the universal bracket's convergence: after the last transform step, make **no further
 edits**, then run the whole suite plus every required evidence kind (`go-test`, `pg`, `redis`, browser
@@ -165,7 +171,7 @@ E2E, …) back-to-back so all captures share one whole-tree fingerprint. Refacto
 assertion the other modes don't need: **the public contract diff is empty** — no OpenAPI/proto/schema
 change, no changed exported signature that callers depend on (unless the caller update is itself part
 of the reviewed refactor). Definition of Done: **same behavior, clearer structure** — the suite that
-was green at pin-green (Step 2) is still green, untouched.
+was green at the pin-green gate is still green, untouched.
 
 ## What refactor mode changes vs. keeps
 

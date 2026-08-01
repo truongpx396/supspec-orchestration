@@ -178,6 +178,38 @@ assert  "20a track-precheck.sh bundled + referenced in SKILL.md" \
 assert  "20b SKILL.md references scripts/track-precheck.sh" \
   grep -q "scripts/track-precheck.sh" "$SKILL"
 
+# --- Confirm-waiver plumbing (the fan-out deadlock) --------------------------
+# single-branch-development treats its preflight confirm as a MANDATORY human gate. A
+# dispatched worker has no human, so unless the orchestrator passes the waiver each
+# worker either blocks forever or silently self-approves — and N workers each deciding
+# that independently is the worst outcome. These assert the plumbing exists on BOTH
+# sides of the composition boundary.
+assert  "20c Step 3 instructs passing the confirm waiver to every worker" \
+  grep -q "AUTO_CONFIRM" "$SKILL"
+assert_pipe "20d waiver appears in the per-track env block, not just prose" \
+  "awk '/# PER-TRACK/,/# GLOBAL/' '$SKILL' | grep -q 'AUTO_CONFIRM=1'"
+assert_pipe "20e Skill-Per-Step Map fan-out row names the waiver" \
+  "grep -q '^| 3 Fan out.*AUTO_CONFIRM' '$SKILL'"
+assert  "20f SBD preflight actually implements the waiver it is passed" \
+  grep -q 'AUTO_CONFIRM' "$SBD_DIR/scripts/track-preflight.sh"
+assert  "20g waiver is recorded for audit (human vs orchestrator-waiver)" \
+  grep -q 'orchestrator-waiver' "$SBD_DIR/scripts/track-preflight.sh"
+assert  "20h Gotchas warn about the un-waived fan-out deadlock" \
+  grep -qi 'hangs on a question nobody will answer' "$SKILL"
+
+# --- Orchestrator compaction discipline --------------------------------------
+# The orchestrator session outlives every worker it spawns — it is the longest-running
+# context in the system and nothing re-anchors it. Workers reconcile from breadcrumbs;
+# the orchestrator has only its ledger.
+assert  "20i Orchestrator ledger section present" \
+  grep -qi "^## Orchestrator ledger" "$SKILL"
+assert  "20j ledger names compaction as the threat" \
+  grep -qi "compact" "$SKILL"
+assert_pipe "20k ledger tells the orchestrator to rebuild fleet state from runs/ files" \
+  "awk '/^## Orchestrator ledger/,/^## Traceability/' '$SKILL' | grep -q 'runs/'"
+assert  "20l run-record schema carries phase + blocker + next_step for re-dispatch" \
+  grep -q '"phase"' "$SKILL"
+
 # ═════════════════════════════════════════════════════════════════════════════
 # Suite 2 — track-manifest.template.md Completeness
 # ═════════════════════════════════════════════════════════════════════════════

@@ -60,22 +60,29 @@ behavioral task that owns its own micro red-green is simply an N=1 story run.
 
 ## Pipeline (story core)
 
-Steps 0 (preflight + isolate) and 6 (draft PR) are identical to the universal bracket. The core is a
-**RED batch → review → incremental GREEN → converge** sequence:
+The preflight/isolate/governance entry and the draft-PR boundary are identical to the universal
+bracket. The core is a **RED batch → review → incremental GREEN → converge** sequence. **Gates are
+named, not numbered** — the SKILL body numbers its bracket 1–8, so a bare number means different
+things in the two documents:
 
 ```
-0.  Preflight & isolate branch                                   [reuse: track-preflight.sh, using-git-worktrees]
-1.  GUARD: confirm the batch is behavioral (a ### Tests + ### Impl
-    split, or an N=1 task with its own test)                      [non-behavioral? → scaffold mode]
-2.  RED BATCH: fan-out generate the ### Tests group ([P] disjoint),
-    apply serially, RUN, assert the WHOLE group fails correctly    [parallel gen ✅  dispatching-parallel-agents]
-3.  RED REVIEW: review + FREEZE the failing test suite             [serial → requesting-code-review + security]
-4.  GREEN (incremental): implement ### Impl in dependency order;
-    each task/cluster flips an identifiable subset of the suite
-    green, reviewed per increment                                  [serial → subagent-driven-development]
-5.  CONVERGE & verify-all: freeze, run the whole story suite +
-    every evidence kind against ONE fingerprint                    [serial → verification-before-completion]
-6.  Draft-PR finish                                              [reuse: overrides finishing-a-development-branch]
+[bracket]     Preflight & isolate branch                  [reuse: track-preflight.sh, using-git-worktrees]
+[bracket]     GOVERNANCE GATE — discover, distil, persist
+              runs/<RUN_ID>.governance.md                 [reuse: references/governance.md]
+MODE GUARD    confirm the batch is behavioral (a ### Tests
+              + ### Impl split, or an N=1 task with its
+              own test)                                   [non-behavioral? → scaffold mode]
+RED BATCH     fan-out generate the ### Tests group ([P]
+              disjoint), apply serially, RUN, assert the
+              WHOLE group fails correctly                 [parallel gen ✅ dispatching-parallel-agents]
+RED REVIEW    review + FREEZE the failing test suite      [serial → requesting-code-review + security]
+   GATE
+GREEN         implement ### Impl in dependency order; each
+(incremental) task/cluster flips an identifiable subset
+              green, reviewed per increment               [serial → subagent-driven-development]
+CONVERGENCE   freeze, run the whole story suite + every
+   GATE       evidence kind against ONE fingerprint       [serial → verification-before-completion]
+[bracket]     Draft-PR finish                             [overrides finishing-a-development-branch]
 ```
 
 ### Which superpowers skill runs at which step
@@ -94,7 +101,7 @@ this stage is behavioral, so `test-driven-development` (via the RED batch) and
 | 5 | Converge & verify-all | `verification-before-completion` | Whole story suite green + all evidence kinds on one fingerprint |
 | 6 | Draft-PR finish | **overrides** `finishing-a-development-branch` | Worker stops at a draft PR; merge owned by repo/CI |
 
-### Step 2 — RED as a batch (generate in parallel, but it must actually fail)
+### RED BATCH — generate in parallel, but it must actually fail
 
 The `### Tests` group is `[P]` (disjoint files), so its **generation** fans out exactly like scaffold
 mode: N read-only subagents each *return one test file body as text*; the controller (single writer)
@@ -103,18 +110,18 @@ accepted only when the **whole group fails for the right reason** — a compile 
 assertion, or a genuine unmet expectation, **not** a typo or a missing import. "Red for the wrong
 reason" is a silent hole; assert real red before proceeding.
 
-**Each RED-author subagent's brief carries the governance set** (see the SKILL Step-4 "governance is a
-maker obligation" rule): the relevant **constitution** principles, the `.github/instructions/*` matching
+**Each RED-author subagent's brief carries the governance bundle** (see
+[`governance.md`](governance.md) — re-read it from `runs/<RUN_ID>.governance.md`, never from memory): the relevant **constitution** principles, the `.github/instructions/*` matching
 the files under test, and — because story-scope tests encode security behavior (access-scope, injection
 resistance, clearance) — `security-and-owasp.instructions.md`. For **frontend test clusters** (files
 testing `.tsx`/`.ts`/`.jsx` components), also include the relevant design artefacts collected during
-the SKILL Step-4 discovery (`.stitch/designs/<page>.html` and/or `design-system/` page spec, if they
+governance discovery (`.stitch/designs/<page>.html` and/or `design-system/` page spec, if they
 exist) — so the tests assert the correct design intent, not an inferred one. Pass silently if absent.
 The tests a maker writes must *assert* the governance criteria, not just happy-path behavior, so the
-frozen suite already pins them down before any implementation exists. This complements the Step-3 RED
-review, which re-applies the same governance as the checker backstop.
+frozen suite already pins them down before any implementation exists. This complements the RED review
+gate, which re-applies the same governance as the checker backstop.
 
-### Step 3 — review and FREEZE the tests before greening
+### RED REVIEW GATE — review and FREEZE the tests before greening
 
 A batch of unreviewed tests is worse than no tests: it manufactures false confidence, and here the
 tests define **security** behavior (access-scope, injection resistance, memory clearance). So the RED
@@ -125,7 +132,7 @@ only. **Greening by weakening a test — deleting an assertion, loosening a matc
 case — is forbidden.** If a test is genuinely wrong, route the fix back through this RED review gate;
 never edit it silently mid-green.
 
-### Step 4 — GREEN incrementally, not big-bang
+### GREEN — incrementally, not big-bang
 
 This is the deliberate rejection of "implement everything, then check the whole suite green at the
 end." Implement the `### Implementation` group in **dependency order** and drive the frozen red suite
@@ -136,7 +143,7 @@ specific red tests green without weakening them."* You keep SDD's per-increment 
 stage-2 (quality, + security on trust-boundary tasks) review.
 
 **When invoking `subagent-driven-development`, explicitly carry the governance bundle** (constitution
-excerpts + matched `instructions/*` content) that you collected at Step 4's pre-code gate into
+excerpts + matched `instructions/*` content, re-read from `runs/<RUN_ID>.governance.md`) into
 SDD's per-task maker subagent briefs. Subagents have isolated context — they will not see VS Code's
 injected instructions unless the brief includes the content. A brief that names a file without its
 content is an empty reference. Each per-task maker must satisfy the governance constraints *while
@@ -151,12 +158,12 @@ Why not big-bang green (the literal "green as a whole" form):
 - **One giant diff makes maker/checker review mushy** — coherent per-increment diffs review far
   better than a 20-file dump.
 
-Batching the *test authoring* up front (Step 2) is what aligns with the file layout; batching the
+Batching the *test authoring* up front is what aligns with the file layout; batching the
 *green* is what throws away the loop. Story mode keeps the first and refuses the second.
 
-### Step 5 — converge on one fingerprint
+### CONVERGENCE GATE — converge on one fingerprint
 
-Identical to the universal bracket's freeze & verify-all (SKILL Step 5): once the last impl increment
+Identical to the universal bracket's freeze & verify-all: once the last impl increment
 greens its subset, make **no further edits**, then run the whole story test suite plus every required
 evidence kind
 (`go-test`, `pg`, `redis`, browser E2E, …) back-to-back so all captures share one whole-tree
@@ -172,7 +179,7 @@ ingest … browsable library"*) realized as green output you paste, not assert.
 | Green | Per task | **Incremental** — each impl task/cluster greens a subset of the frozen suite |
 | TDD | Per task, if the task says so | **At story scope** — the RED batch is the failing acceptance suite |
 | Security review | Per trust-boundary task | **On the RED suite up front** *and* per trust-boundary impl task |
-| Evidence | Per task, converged at freeze & verify-all | Whole story suite + all kinds on one fingerprint (Step 5) |
+| Evidence | Per task, converged at freeze & verify-all | Whole story suite + all kinds on one fingerprint (convergence gate) |
 | Preflight / isolation / run-log / hooks / draft-PR | — | **Identical (reused)** |
 
 ## When to use / when to refuse
