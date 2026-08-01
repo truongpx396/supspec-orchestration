@@ -218,6 +218,10 @@ subagent vs ⚙️ script).
    same evidence you did instead of taking "I followed the pipeline" on trust. The unchecked
    remainder is yours to audit against
    [`tests/prompt-level-checklist.md`](tests/prompt-level-checklist.md).
+   **Label the PR `agent-generated`** (`gh pr create --draft … --label agent-generated`): CI keys on
+   it to assert the Auto block is actually present and declares no blocking failure. Skipping the
+   whole bundle produces no Auto block at all, and only a check *outside* the agent can see that
+   absence — a reporter cannot report on its own absence.
    **Never open a draft PR with an unaddressed ⚠️.** Once the PR is open, run `track-preflight.sh --complete` to stamp
    `completed_utc` + `duration_secs` (now − `created_utc`) onto the breadcrumb — write-once, the one
    deliberate boundary that knows the run's total wall-clock (a per-event hook never sees PR handoff).

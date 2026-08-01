@@ -906,6 +906,59 @@ aud_seed e2fail; jq '.evidence=[{t:"a",kind:"go",cmd:"c",response:"FAIL",fingerp
 aud_seed f1none; jq 'del(.status)' "$AUD_RUNS/f1none.json" > "$AUD_RUNS/t" && mv "$AUD_RUNS/t" "$AUD_RUNS/f1none.json"
 [ "$(aud_verdict f1none F1)" = "WARN" ] && pass "audit: F1 warns when no terminal state was recorded" || fail "audit: F1 warns when no terminal state was recorded"
 
+# --- Isolation & resume (the early bracket) ------------------------------------
+# Before these existed, a run that never isolated and never reconciled audited
+# perfectly clean: every later gate can pass while the work was done on main.
+AUD_ISO="$(mktemp -d)"; ( cd "$AUD_ISO" && git init -q . \
+  && git config user.email t@t && git config user.name t \
+  && echo x > a && git add -A && git commit -qm b >/dev/null 2>&1 \
+  && git branch -M main ) >/dev/null 2>&1
+mkdir -p "$AUD_ISO/runs"
+jq -nc '{run_id:"iso",v:1,tool_calls:1,phase:{mode:"story",step:"green"},
+         phase_log:[{t:"a",mode:"story",step:"governance"}],trace:[],evidence:[]}' \
+  > "$AUD_ISO/runs/iso.json"
+_iso() { ( cd "$AUD_ISO" && RUN_ID=iso RUNS_DIR=runs TRACK_BASE_REF=main \
+           bash "$AUDIT" --json --warn-only 2>/dev/null ) \
+         | jq -r --arg c "$1" '.checks[] | select(.id==$c) | .verdict'; }
+
+[ "$(_iso I1)" = "FAIL" ] \
+  && pass "audit: I1 fails when work was done on the default branch (never isolated)" \
+  || fail "audit: I1 fails when work was done on the default branch (got $(_iso I1))"
+[ "$(_iso I3)" = "WARN" ] \
+  && pass "audit: I3 warns when no reconcile is on record" \
+  || fail "audit: I3 warns when no reconcile is on record"
+
+# A real feature branch clears I1's FAIL but still warns without a linked worktree,
+# because branch-in-place is only the documented fallback.
+( cd "$AUD_ISO" && git checkout -qb feat/x ) >/dev/null 2>&1
+[ "$(_iso I1)" = "WARN" ] \
+  && pass "audit: I1 warns on branch-in-place (no linked worktree)" \
+  || fail "audit: I1 warns on branch-in-place (got $(_iso I1))"
+
+# Breadcrumb drift: the approved branch and the actual branch must agree.
+jq -nc '{run_id:"iso",branch:"some-other-branch",track:"iso"}' > "$AUD_ISO/runs/iso.dispatch"
+[ "$(_iso I2)" = "WARN" ] \
+  && pass "audit: I2 warns when work drifted off the branch approved at preflight" \
+  || fail "audit: I2 warns when work drifted off the approved branch"
+jq -nc '{run_id:"iso",branch:"feat/x",track:"iso"}' > "$AUD_ISO/runs/iso.dispatch"
+[ "$(_iso I2)" = "PASS" ] \
+  && pass "audit: I2 passes when work is on the approved branch" \
+  || fail "audit: I2 passes when work is on the approved branch"
+
+# track-reconcile.sh must leave the durable trace I3 reads — an invariant with no
+# artifact cannot be audited, only hoped for.
+# NOTE: reconcile reads the hook payload from stdin. Its [ -t 0 ] guard only skips that
+# read on an interactive TTY — invoked from a script it will block on `cat` forever, so
+# always feed it a payload (or </dev/null) from a test.
+( cd "$AUD_ISO" && printf '{}' | RUN_ID=iso RUNS_DIR=runs TRACK_BASE_REF=main bash "$RECONCILE" ) >/dev/null 2>&1
+jq -e '.last_reconcile.t | type == "string"' "$AUD_ISO/runs/iso.json" >/dev/null 2>&1 \
+  && pass "reconcile: stamps last_reconcile into the run record" \
+  || fail "reconcile: stamps last_reconcile into the run record"
+[ "$(_iso I3)" = "PASS" ] \
+  && pass "audit: I3 passes once reconcile has run" \
+  || fail "audit: I3 passes once reconcile has run"
+rm -rf "$AUD_ISO"
+
 # Exit codes + the honesty contract.
 RUN_ID=clean RUNS_DIR="$AUD_RUNS" bash "$AUDIT" >/dev/null 2>&1 \
   && pass "audit: clean run exits 0" || fail "audit: clean run exits 0"
@@ -1657,6 +1710,43 @@ if grep -q 'track-audit.sh' "$SKILL_MD" 2>/dev/null \
 else
   fail "struct: SKILL.md runs the audit; checklist marks automated vs human items"
 fi
+
+# 10.28 — the wholesale-skip gate lives OUTSIDE the agent.
+# track-audit.sh catches a run that missed a step; it cannot catch a run that skipped the
+# bundle, because then there is no record to audit and no Auto block to be missing from.
+# A reporter cannot report on its own absence, so this check must be CI-side.
+# NOTE: $REPO_ROOT resolves to .github/ (it is one level short — harmless for the git
+# operations every other test uses, but wrong for a repo-relative path). Ask git.
+GIT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "$REPO_ROOT/..")"
+AGENT_WF="$GIT_ROOT/.github/workflows/agent-pr-audit.yml"
+if [ -f "$AGENT_WF" ] \
+   && grep -q 'END track-report auto block' "$AGENT_WF" \
+   && grep -q 'agent-generated' "$AGENT_WF" \
+   && grep -q 'blocking — this PR should not have been opened' "$AGENT_WF"; then
+  pass "struct: CI gate asserts the Auto block + no blocking audit on agent PRs"
+else
+  fail "struct: CI gate asserts the Auto block + no blocking audit on agent PRs"
+fi
+
+# Scoped to agent PRs only. A blanket rule would fail every hand-written PR and be
+# switched off within a week — a gate nobody can live with protects nothing.
+grep -q "contains(github.event.pull_request.labels" "$AGENT_WF" 2>/dev/null \
+  && pass "struct: CI gate is scoped to agent-generated PRs (human PRs untouched)" \
+  || fail "struct: CI gate is scoped to agent-generated PRs"
+
+# The PR body is attacker-controlled text: it must reach the script through the
+# environment, never via ${{ }} interpolation inside a run block (shell-injection sink).
+if grep -q 'PR_BODY: \${{ github.event.pull_request.body }}' "$AGENT_WF" 2>/dev/null \
+   && ! grep -E '^\s+(echo|printf|grep).*\$\{\{ github.event.pull_request.body' "$AGENT_WF" >/dev/null 2>&1; then
+  pass "struct: CI gate passes the PR body via env, not inline interpolation"
+else
+  fail "struct: CI gate passes the PR body via env, not inline interpolation"
+fi
+
+# The skill must actually attach the label the gate keys on, or the gate never fires.
+grep -q 'agent-generated' "$SKILL_MD" 2>/dev/null \
+  && pass "struct: SKILL.md labels the PR agent-generated so the CI gate fires" \
+  || fail "struct: SKILL.md labels the PR agent-generated so the CI gate fires"
 
 # 10.25 — SKILL.md body stays within the repo's own 500-line hard maximum
 _skill_lines=$(wc -l < "$SKILL_MD" | tr -d ' ')

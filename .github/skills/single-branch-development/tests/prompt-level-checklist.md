@@ -1,6 +1,6 @@
 # Prompt-Level Invariant Checklist
 
-*10 items automated · 3 partly automated · 12 human-only*
+*13 items automated · 3 partly automated · 12 human-only*
 
 **Most of this list is now automated — run [`../scripts/track-audit.sh`](../scripts/track-audit.sh)
 first.** It re-derives every ⚙️-marked item below from durable artifacts (the run record, the
@@ -25,6 +25,23 @@ confidence this pipeline exists to prevent.
 
 Legend: ⚙️ = checked by `track-audit.sh` (id in brackets) · ✋ = human only.
 
+## Coverage by pipeline step
+
+What a reviewer sees in the PR body when a step is missed:
+
+| Step | Missed → surfaced? |
+|---|---|
+| 1 Preflight & confirm | ⚙️ `I2` (no breadcrumb) |
+| 2 Reconcile / resume | ⚙️ `I3` (no `last_reconcile` stamp) |
+| 3 Isolate | ⚙️ `I1` (on the default branch → FAIL; branch-in-place → WARN) |
+| 4 Governance gate | ⚙️ `G1`–`G4` |
+| 4 Mode guard + core | ⚙️ `P1`/`P2`, `T1`, `T2` |
+| 5 Convergence | ⚙️ `E1` |
+| 6 Evidence gate | ⚙️ `E2` + the evidence table + compliance warnings |
+| 7 Run record | rendered in the Auto block |
+| 8 Terminal state | ⚙️ `F1` |
+| **the whole bundle** | 🏗 CI (`agent-pr-audit.yml`) — a run that skipped everything produces *no* Auto block, and a reporter cannot report on its own absence, so the check lives outside the agent |
+
 ---
 
 ## A. Governance (the round-trip that ships credentials)
@@ -40,6 +57,16 @@ Legend: ⚙️ = checked by `track-audit.sh` (id in brackets) · ✋ = human onl
       and look. *"Follow `go.instructions.md`"* is the failure this whole gate exists to prevent.
 - [ ] ✋ **A6** — Frontend clusters carry the design artefacts (`.stitch/designs/…`,
       `design-system/…`) when they exist.
+
+## A′. Isolation & resume (the early bracket)
+
+- [ ] ⚙️ **A7** `[I1]` — The work was isolated: a linked worktree on its own branch. Working on the
+      default branch is a FAIL; branch-in-place warns, since it is allowed only as the documented
+      `using-git-worktrees` fallback *after* the limitation was surfaced.
+- [ ] ⚙️ **A8** `[I2]` — A preflight breadcrumb exists and its approved branch matches the branch the
+      work actually landed on. Drift means the approved plan and the real work diverged silently.
+- [ ] ⚙️ **A9** `[I3]` — `track-reconcile.sh` ran (it stamps `last_reconcile`). Absent means either
+      the SessionStart hook is unwired or the run never re-anchored from durable state.
 
 ## B. Compaction resilience (the invariant that silently degrades)
 

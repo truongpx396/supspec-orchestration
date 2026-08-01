@@ -108,6 +108,9 @@ remediation_for() {
     G2) printf 'Read the missing .github/instructions/* file(s) and add their binding constraints to the bundle, then re-pin it.' ;;
     G3) printf 'Governance must be discovered and pinned BEFORE any subagent is dispatched. Re-run the affected dispatches with the bundle content embedded in each brief.' ;;
     G4) printf 'Read security-and-owasp.instructions.md, add its relevant constraints to the bundle, and re-review the trust-boundary diff against them.' ;;
+    I1) printf 'Isolate the work first: run using-git-worktrees to place it in a dedicated worktree on its own branch. Never work on the default branch; branch-in-place is allowed only when using-git-worktrees routes there AND that limitation was surfaced.' ;;
+    I2) printf 'Re-run track-preflight.sh --persist for this track so the breadcrumb records the branch actually in use, or move the work to the approved branch. Do not let the approved plan and the real work diverge.' ;;
+    I3) printf 'Run track-reconcile.sh at session start and after any compaction, and act on its resume_action. If it never runs, wire it to SessionStart (install-hooks.sh) — position must come from durable state, never from re-reading the worktree.' ;;
     P1|P2) printf 'Stamp each gate boundary as you cross it: track-note.sh phase <mode> <step>. Without it a compacted session cannot re-anchor.' ;;
     M1) printf 'The stage-1/stage-2 reviewer must be a subagent distinct from the implementer. Re-review with a fresh agent if one agent did both.' ;;
     T1) printf 'Story mode requires the RED suite to fail BEFORE implementation. Confirm the tests were authored first; if they were not, this is not TDD.' ;;
@@ -219,6 +222,58 @@ if printf '%s\n' "$changed" | grep -Eqi "$tb_re"; then
   fi
 else
   add G4 PASS "no trust-boundary paths in the diff (security add-on not required)"
+fi
+
+# ════════════════════════════════════════════════════════════════════════════════════
+# ISOLATION & RESUME — the early bracket. Without these, a run that never isolated and
+# never reconciled audits perfectly clean: every later gate can pass while the work was
+# done straight on the default branch. "Never start on main" is one of this skill's
+# loudest rules and it had no post-hoc check at all.
+# ════════════════════════════════════════════════════════════════════════════════════
+
+cur_branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")"
+# Default branch: strip any remote prefix off the base ref (origin/main -> main).
+def_branch="${base##*/}"
+[ -n "$def_branch" ] || def_branch="main"
+
+# I1 — worked on the default branch at all? That is the failure Step 3 exists to prevent.
+# A linked worktree is the expected form; branch-in-place is permitted ONLY as the
+# documented fallback, so it warns rather than fails.
+in_worktree=0
+if [ "$(git rev-parse --git-dir 2>/dev/null || echo a)" != "$(git rev-parse --git-common-dir 2>/dev/null || echo b)" ]; then
+  in_worktree=1
+fi
+if [ -n "$cur_branch" ] && [ "$cur_branch" = "$def_branch" ]; then
+  add I1 FAIL "work is on '$cur_branch', the default branch — the run never isolated (Step 3 exists to prevent exactly this)"
+elif [ "$in_worktree" -eq 1 ]; then
+  add I1 PASS "isolated in a linked worktree on branch '$cur_branch'"
+elif [ -n "$cur_branch" ]; then
+  add I1 WARN "on branch '$cur_branch' but NOT in a linked worktree — branch-in-place is allowed only as the documented using-git-worktrees fallback, after surfacing it"
+else
+  add I1 WARN "could not determine the current branch — isolation unverifiable"
+fi
+
+# I2 — did the work land where the human approved? The breadcrumb records the branch that
+# was confirmed at preflight; drifting off it means the approved plan and the actual work
+# diverged silently.
+bc_branch=""
+bc_file="$RUNS_DIR/$RUN_ID.dispatch"
+[ -f "$bc_file" ] && bc_branch="$(jq -r '.branch // empty' "$bc_file" 2>/dev/null || true)"
+if [ -z "$bc_branch" ]; then
+  add I2 WARN "no preflight breadcrumb for this run — the start gate was skipped, or RUNS_DIR differs from the one used at preflight"
+elif [ -n "$cur_branch" ] && [ "$bc_branch" != "$cur_branch" ]; then
+  add I2 WARN "breadcrumb approved branch '$bc_branch' but the work is on '$cur_branch'"
+else
+  add I2 PASS "work is on the branch confirmed at preflight ('$bc_branch')"
+fi
+
+# I3 — reconcile leaves a `last_reconcile` stamp. Absent means either it never ran (the
+# run rebuilt position by reading the worktree, which the resume invariant forbids) or the
+# SessionStart hook is not wired. Both are worth surfacing; neither is provably fatal.
+if [ "$(j '.last_reconcile.t // ""')" != "" ]; then
+  add I3 PASS "reconcile ran and re-anchored from durable state"
+else
+  add I3 WARN "no reconcile on record — either the SessionStart hook is unwired, or the run never re-anchored from durable state after a resume/compaction"
 fi
 
 # ════════════════════════════════════════════════════════════════════════════════════
