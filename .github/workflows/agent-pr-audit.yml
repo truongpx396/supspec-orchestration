@@ -235,10 +235,15 @@ jobs:
           set -uo pipefail
           body="${PR_BODY:-}"
 
+          # NOTE: GitHub runs this block as `bash -e`, and `set -uo pipefail` does NOT undo
+          # that. Every grep below can legitimately match nothing (a body with no audit
+          # section, a clean audit with no rows), and a bare non-zero grep would abort the
+          # step with a bare "exit code 1" instead of the verdict it exists to report. Hence
+          # `|| true` on each: "found nothing" is data here, not an error.
           # The summary line track-report.sh renders, e.g.
           #   - **14 passed · 2 warning(s) · 0 failure(s)**  ⚠️ review the warnings below
           summary="$(printf '%s\n' "$body" \
-            | grep -oE '[0-9]+ passed · [0-9]+ warning\(s\) · [0-9]+ failure\(s\)' | head -1)"
+            | grep -oE '[0-9]+ passed · [0-9]+ warning\(s\) · [0-9]+ failure\(s\)' | head -1 || true)"
 
           if [ -z "$summary" ]; then
             echo "::warning::No discipline-audit summary in this agent PR body. Either the install predates track-audit.sh, or the section was removed after rendering. Every pipeline invariant here is UNVERIFIED — a reviewer must treat it as such."
@@ -253,8 +258,8 @@ jobs:
           # hand-edited after rendering — the one remaining way a failing audit reaches a
           # reviewer looking clean. Machine-rendered output that contradicts itself is not
           # evidence, so a mismatch is a hard failure rather than a warning.
-          fail_rows="$(printf '%s\n' "$body" | grep -cE '^\| ❌ \|')"
-          warn_rows="$(printf '%s\n' "$body" | grep -cE '^\| ⚠️ \|')"
+          fail_rows="$(printf '%s\n' "$body" | grep -cE '^\| ❌ \|' || true)"
+          warn_rows="$(printf '%s\n' "$body" | grep -cE '^\| ⚠️ \|' || true)"
           echo "declared: ${warn_declared} warn / ${fail_declared} fail" \
                "— rendered rows: ${warn_rows} warn / ${fail_rows} fail"
 

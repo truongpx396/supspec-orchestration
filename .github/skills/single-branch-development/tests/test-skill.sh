@@ -1895,6 +1895,19 @@ else
   fail "struct: a waived PR touching the gates is flagged in the summary"
 fi
 
+# GitHub runs every `run:` block as `bash -e`, and an in-script `set -uo pipefail` does NOT
+# undo that. A grep that legitimately matches nothing — no audit section in the body, a clean
+# audit with no rows — then aborts the step with a bare "exit code 1" instead of reporting the
+# verdict it exists to report: the gate fails for the wrong reason and says nothing useful.
+# Counting/extracting greps must therefore carry `|| true`. (`grep -q` in a condition is safe;
+# set -e exempts the test of an `if`.) This is invisible until CI runs, so pin it here.
+_bad_grep="$(grep -nE 'grep -(c|o)' "$AGENT_WF" 2>/dev/null | grep -v '|| true' || true)"
+if [ -z "$_bad_grep" ]; then
+  pass "struct: CI greps that may match nothing are guarded against bash -e"
+else
+  fail "struct: unguarded counting grep in the CI gate (bash -e aborts): $_bad_grep"
+fi
+
 # A hand-edited Auto block is the last way a failing audit reaches a reviewer looking clean:
 # every non-PASS check renders exactly one table row, so the declared counts and the rendered
 # rows must agree or the block was edited after it was generated.
