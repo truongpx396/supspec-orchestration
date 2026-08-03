@@ -22,6 +22,19 @@ set -eufo pipefail
 # uses ${VAR:-default}, so an already-exported value (e.g. an executing-parallel-
 # tracks per-track override) still wins over both. No-op when a file is absent.
 __env_dir="${BASH_SOURCE[0]%/*}"
+# Prefer the MAIN checkout's .github/hooks (canonical) when installed, so a hook
+# firing from a linked worktree sources the SAME per-run env + RUN_ID block the
+# main-checkout preflight wrote — not an absent worktree-local copy (which would
+# leave the guard with empty scope and deny every worktree write). git-common-dir
+# resolves to the main repo's .git from any worktree; its parent is the main root.
+__gcd="$(git rev-parse --git-common-dir 2>/dev/null || true)"
+if [ -n "$__gcd" ]; then
+  case "$__gcd" in /*) ;; *) __gcd="$PWD/$__gcd" ;; esac
+  __main_root="$(cd "$__gcd/.." 2>/dev/null && pwd || true)"
+  if [ -n "$__main_root" ] && [ -d "$__main_root/.github/hooks" ]; then __env_dir="$__main_root/.github/hooks"; fi
+  unset __main_root
+fi
+unset __gcd
 if [ -f "$__env_dir/track-env.sh" ]; then . "$__env_dir/track-env.sh"; fi
 if [ -f "$__env_dir/track-env.base.sh" ]; then . "$__env_dir/track-env.base.sh"; fi
 unset __env_dir
@@ -32,6 +45,24 @@ unset __env_dir
 [ -n "${RUN_ID:-}" ] || exit 0
 
 RUNS_DIR="${RUNS_DIR:-runs}"
+# Anchor a RELATIVE RUNS_DIR to the main working tree so the run record is
+# single-homed across the main checkout and any linked worktree — a bare "runs"
+# resolves against the process CWD, splitting the record when preflight mints it
+# in the main checkout but later hooks fire from a sibling worktree. An absolute
+# RUNS_DIR (explicit override, e.g. the test harness) is respected verbatim.
+case "$RUNS_DIR" in
+  /*) ;;
+  *)
+    __rgcd="$(git rev-parse --git-common-dir 2>/dev/null || true)"
+    if [ -n "$__rgcd" ]; then
+      case "$__rgcd" in /*) ;; *) __rgcd="$PWD/$__rgcd" ;; esac
+      __rroot="$(cd "$__rgcd/.." 2>/dev/null && pwd || true)"
+      if [ -n "$__rroot" ]; then RUNS_DIR="$__rroot/$RUNS_DIR"; fi
+      unset __rroot
+    fi
+    unset __rgcd
+    ;;
+esac
 rec="$RUNS_DIR/$RUN_ID.json"
 mkdir -p "$RUNS_DIR"
 # Canonical skeleton — identical across track-evidence/-meter/-trace so whichever hook
