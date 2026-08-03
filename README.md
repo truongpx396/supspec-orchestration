@@ -28,6 +28,7 @@ Built on **[SpecKit](https://github.com/github/spec-kit)** (spec → plan → ta
 - [🧬 Anatomy of a skill](#-anatomy-of-a-skill)
 - [⚙️ The hooks bundle](#️-the-hooks-bundle)
 - [📸 Evidence](#-evidence)
+- [🧾 Discipline audit](#-discipline-audit)
 - [📦 Run artifacts](#-run-artifacts-run-record--pr-body)
 - [🔍 Tracing and observability](#-tracing-and-observability)
 - [📂 Repository layout](#-repository-layout)
@@ -212,6 +213,7 @@ Scripts are listed in the order they typically fire across a track's lifetime:
 | `track-meter.sh` *(repo-policy)* | `PostToolUse` | **Governance** | 🔢 Count tool calls + heartbeat; hard-stop at `TRACK_MAX_TOOL_CALLS` |
 | `track-trace.sh` *(per-track)* | `SubagentStart/Stop` | **Observability** | 🔍 Record **why** each subagent was spawned (`agent_description`) + stop reason |
 | `track-note.sh` *(per-track)* | skill-invoked (each gate boundary) | **Observability** | 📝 `phase` + `governance` (**mandatory** — the compaction/crash re-anchor), `status` (terminal state), `skill`/`loop` (optional trace). All tagged as model-claim |
+| `track-compact.sh` *(per-track)* | `PreCompact/PostCompact` + `PostToolUse` | **Observability** | 🧩 Make context compaction **auditable** — record `compactions[]` (a compaction fired) + `governance_reads[]` (the pinned bundle was re-read from disk), both hook-observed |
 | `track-sentinel.sh` *(repo-policy)* | `Stop` | **Scope & guard** | 🔒 Scan staged diff for likely secrets / debug leftovers before handoff |
 | `track-audit.sh` *(per-track)* | skill-invoked (before PR) + `Stop` *(opt-in)* | **Evidence & quality** | 🔎 Re-derive the **discipline** invariants from artifacts: isolation, reconcile, governance ordering + coverage, phase advance, real RED-before-green, convergence, test weakening. Verdicts + remediation land in the PR body; prints what it *cannot* check |
 | `track-evidence-gate.sh` *(repo-policy)* | `Stop` | **Evidence & quality** | 🚦 Block stop unless evidence is present, **fresh** (fingerprint matches tree), and passing |
@@ -247,6 +249,53 @@ Evidence is what separates "the agent claimed it worked" from "the agent proved 
 | E2E browser tests *(add manually)* | `e2e` | `npx playwright test` |
 
 These are **additive and fully modifiable** — edit `TRACK_EVIDENCE_KINDS` and `TRACK_EVIDENCE_RULES` in `track-env.base.sh` to add, replace, or remove kinds for your stack. No rewrite needed; the installer just saves the first-run ceremony.
+
+---
+
+## 🧾 Discipline audit
+
+The evidence gate proves the tests *passed*. It cannot prove the run was **disciplined** — that governance was read before the first subagent, that the RED suite was actually red, that the reviewer was a different agent than the maker, that the phases advanced at all. `track-audit.sh` closes that gap: it re-derives each pipeline invariant from **durable artifacts only** (the run record + governance bundle + `git diff`), never from the model's account of itself. Run it by hand any time, and always at the draft-PR boundary before `gh pr create`.
+
+**Four verdicts, and an honesty rule.** Every check is derived from an artifact; anything that cannot be is printed under `MANUAL` rather than faked as a PASS — *a green audit that quietly skipped the hard half is worse than no audit.*
+
+| Verdict | Meaning | Effect |
+|---|---|---|
+| **`FAIL`** | A durable artifact contradicts the pipeline contract | 🚫 Blocks — exits 2 (CLI) / `{decision:"block"}` (hook) |
+| **`WARN`** | Suspicious, or unverifiable on this surface | Never blocks; always printed |
+| **`PASS`** | An artifact positively confirms the check | — |
+| **`MANUAL`** | Deliberately not mechanizable | Listed so it can't be silently forgotten |
+
+**The invariants it re-derives** (each carries a remediation string that `track-report.sh` renders into the PR body, so a ⚠️ or ✗ always ships with its fix):
+
+| Group | ID | What it checks |
+|---|---|---|
+| **Governance** | `G1` | A governance bundle was pinned, is present on disk, and is unchanged since it was pinned |
+| | `G2` | The bundle mentions every `.github/instructions/*` file whose `applyTo` glob matches the diff |
+| | `G3` | Governance was stamped **before** the first subagent dispatch (a brief built earlier carried no constraints) |
+| | `G4` | A diff touching a trust boundary (auth, secrets, migrations, Dockerfile…) pulled in `security-and-owasp` |
+| **Isolation & resume** | `I1` | Work is **not** on the default branch — a linked worktree is the expected form |
+| | `I2` | Work landed on the branch confirmed at preflight (approved plan ≠ actual work is surfaced) |
+| | `I3` | `track-reconcile.sh` ran and re-anchored from durable state (never re-read the worktree) |
+| | `I4` | **The compaction gate** — between every compaction and the next dispatch there is a governance-bundle re-read (arithmetic over `compactions[]` × `governance_reads[]`, both hook-observed) |
+| **Position** | `P1` | At least one phase was stamped — without it a compacted session has no durable position |
+| | `P2` | The phase log covers the canonical gate sequence for the run's mode (scaffold / story / refactor) |
+| **Maker / checker** | `M1` | The reviewer was a distinct subagent from the implementer (≥ 2 distinct trace ids) |
+| **Test discipline** | `T1` | Story mode has a **failing** capture on record at an earlier fingerprint — the RED phase genuinely ran red |
+| | `T2` | No skip/`only` markers added and no assertions removed from test files (no greening by weakening) |
+| **Evidence** | `E1` | The convergence gate — every kind's latest capture shares one fingerprint (the lanes met on one tree) |
+| | `E2` | Passing captures are substantial enough to be real (a truncated PASS-looking string proves nothing) |
+| **Terminal state** | `F1` | A terminal `status` was recorded — `success`, or a non-success **with** a blocker to route on |
+
+**What it refuses to claim.** The genuinely un-mechanizable checks stay in `MANUAL` and print every run — e.g. *did maker briefs embed governance **content** not just filenames* (`A5`), *did the post-compaction re-read actually get **used** in the next brief* (`B2`), *did the RED batch fail for the **right reason*** (`D1`), *in scaffold mode did the controller apply subagent output rather than author it* (`C2`). The full 13-item list lives in `tests/prompt-level-checklist.md`. A clean audit is **necessary, not sufficient** — the MANUAL items are where the residual risk lives.
+
+**Two modes, deliberately split** — so the bundle keeps its no-op-until-configured contract:
+
+| Mode | Invocation | Behaviour |
+|---|---|---|
+| **CLI** *(default)* | `track-audit.sh` · `--json` · `--warn-only` | Always available; exits 2 on any `FAIL`. Run at the draft-PR boundary |
+| **Hook** *(opt-in)* | `track-audit.sh --hook` | `Stop`-hook gate — only blocks when `TRACK_AUDIT=1`, honors `stop_hook_active` so a blocked stop can still eventually end |
+
+Auditing on every `Stop` by default would break a repo that adopts the hooks but not the governance discipline (it could never end a session) — so the CLI is free and the blocking gate is a choice. Full env + check reference: **[references/hooks.md](.github/skills/single-branch-development/references/hooks.md)**.
 
 ---
 
@@ -359,7 +408,7 @@ Note the split: only the two *ceiling* states are mechanical. `blocked` in parti
 
 **Two provenance classes, never mixed.** `trace[]` is hook-observed fact (subagent boundaries). Everything from `track-note.sh` — `phase`, `governance_bundle`, `status`, `skills[]`, `iterations` — is the model's own claim, tagged `self_reported: true` for exactly that reason.
 
-**Position fields** (`phase`, `governance_bundle`) are what let a run survive a **context compaction**. Compaction happens inside a live session, so no `SessionStart` fires and `track-reconcile.sh` never re-runs — anything held only in the conversation is simply gone, starting with the governance excerpts every subagent brief depends on. Stamping `phase` at each boundary and persisting the bundle to `runs/<RUN_ID>.governance.md` puts that state in files, so `track-reconcile.sh` can hand back a `resume_action` instead of the model guessing from the worktree.
+**Position fields** (`phase`, `governance_bundle`) are what let a run survive a **context compaction**. Compaction happens inside a live session, so no `SessionStart` fires and `track-reconcile.sh` never re-runs — anything held only in the conversation is simply gone, starting with the governance excerpts every subagent brief depends on. Stamping `phase` at each boundary and persisting the bundle to `runs/<RUN_ID>.governance.md` puts that state in files, so `track-reconcile.sh` can hand back a `resume_action` instead of the model guessing from the worktree. `track-compact.sh` closes the loop mechanically: it records `compactions[]` when a compaction fires and `governance_reads[]` when the pinned bundle is re-read from disk, so "was the bundle re-read after the compaction and before the next dispatch?" (`track-audit.sh`'s I4 check) becomes timestamp arithmetic over durable artifacts rather than a claim taken on trust.
 
 **PR body** (`templates/pr-body.md`). Two-zone template:
 
@@ -393,6 +442,7 @@ Grep any one surface → reconstruct the whole run. `runs/summary.md` aggregates
 - `tool_calls` + heartbeat (`track-meter.sh`, every `PostToolUse`)
 - `trace[]` subagent start/stop events (`track-trace.sh`, every `SubagentStart/Stop`)
 - Evidence fingerprints + pass/fail (`track-evidence.sh`, on test tool calls)
+- `compactions[]` + `governance_reads[]` (`track-compact.sh`, on `PreCompact/PostCompact` + bundle re-reads)
 - Token estimate + PR-body Auto block (`track-tokens.sh` + `track-report.sh`, at `Stop`)
 
 **What is self-reported** (model's claim, `self_reported:true`):
@@ -408,6 +458,9 @@ Grep any one surface → reconstruct the whole run. `runs/summary.md` aggregates
   hooks/                              # GENERATED by install-hooks.sh (gitignored in this repo).
                                       #   In a repo that USES these skills, commit it so the
                                       #   bundle travels into every worktree.
+  workflows/                          # CI
+    skill-tests.yml                   # run both self-test suites on every push/PR
+    agent-pr-audit.yml                # audit agent-authored PRs for a present, fresh Auto block
   instructions/                       # governance gate — applied by every review step
     security-and-owasp.instructions.md
     go.instructions.md
@@ -417,12 +470,13 @@ Grep any one surface → reconstruct the whole run. `runs/summary.md` aggregates
     code-review-generic.instructions.md
     backing-services.instructions.md  # PostgreSQL, Redis, NATS, Qdrant, MinIO, Casdoor, Caddy
     devops-cicd.instructions.md       # Docker, Compose, Makefile, GitHub Actions
+    agent-skills.instructions.md      # authoring guidelines for SKILL.md files
   skills/
     single-branch-development/
       SKILL.md
-      references/                     # hooks.md, scaffold/story/refactor-mode.md
+      references/                     # governance.md, hooks.md, scaffold/story/refactor-mode.md
       scripts/                        # canonical source for track-*.sh + install-hooks.sh
-      templates/                      # track-hooks.json, track-env.sh.example, pr-body.md
+      templates/                      # track-hooks.json, claude-settings.json, track-env.sh.example, pr-body.md
       tests/                          # test-skill.sh self-test harness
     executing-parallel-tracks/
       SKILL.md
@@ -577,8 +631,10 @@ bash .github/skills/executing-parallel-tracks/tests/test-skill.sh
 ```
 
 The test harnesses are a **documentation-contract fence + functional regression suite** in one:
-- **122 SBD tests** cover: preflight flag behavior (`--persist`, `--complete`, breadcrumb stamping), guard allow/deny decisions (scope, frozen paths, destructive ops, FF-push gating), evidence capture + gate (fingerprint freshness, stale detection, multi-kind), meter counting + hard-stop, trace schema, sentinel pattern matching, report Auto-block rendering, run-record field completeness, token ceiling enforcement (`TRACK_MAX_TOKEN_ESTIMATE`), and structural checks on SKILL.md / hooks.md / templates.
-- **195 EPT tests** cover: SKILL.md structural integrity (Steps 0–7, gates, wave planner), manifest template completeness, run-record schema (trace[]/ skills[] separation), precheck ownership-overlap detection (disjoint / overlapping / shared hotspot / 3-way), and structural governance assertions.
+- **216 SBD tests** cover: preflight flag behavior (`--persist`, `--complete`, breadcrumb stamping), guard allow/deny decisions (scope, frozen paths, destructive ops, FF-push gating), evidence capture + gate (fingerprint freshness, stale detection, multi-kind), meter counting + hard-stop, trace schema, compaction/governance-read recording, audit invariants, sentinel pattern matching, report Auto-block rendering, run-record field completeness, token ceiling enforcement (`TRACK_MAX_TOKEN_ESTIMATE`), and structural checks on SKILL.md / hooks.md / templates.
+- **205 EPT tests** cover: SKILL.md structural integrity (Steps 0–7, gates, wave planner), manifest template completeness, run-record schema (trace[]/ skills[] separation), precheck ownership-overlap detection (disjoint / overlapping / shared hotspot / 3-way), and structural governance assertions.
+
+Both suites run on every push/PR via [`.github/workflows/skill-tests.yml`](.github/workflows/skill-tests.yml).
 
 ---
 
