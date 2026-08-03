@@ -55,9 +55,38 @@ set -eufo pipefail
 # uses ${VAR:-default}, so an already-exported value (e.g. an executing-parallel-
 # tracks per-track override) still wins over both. No-op when a file is absent.
 __env_dir="${BASH_SOURCE[0]%/*}"
+# Prefer the MAIN checkout's .github/hooks (canonical) when installed, so a hook
+# firing from a linked worktree sources the SAME per-run env + RUN_ID block the
+# main-checkout preflight wrote — not an absent worktree-local copy (which would
+# leave the guard with empty scope and deny every worktree write). git-common-dir
+# resolves to the main repo's .git from any worktree; its parent is the main root.
+__gcd="$(git rev-parse --git-common-dir 2>/dev/null || true)"
+if [ -n "$__gcd" ]; then
+  case "$__gcd" in /*) ;; *) __gcd="$PWD/$__gcd" ;; esac
+  __main_root="$(cd "$__gcd/.." 2>/dev/null && pwd || true)"
+  if [ -n "$__main_root" ] && [ -d "$__main_root/.github/hooks" ]; then __env_dir="$__main_root/.github/hooks"; fi
+  unset __main_root
+fi
+unset __gcd
 if [ -f "$__env_dir/track-env.sh" ]; then . "$__env_dir/track-env.sh"; fi
 if [ -f "$__env_dir/track-env.base.sh" ]; then . "$__env_dir/track-env.base.sh"; fi
 unset __env_dir
+
+# Canonical hooks dir for the RUN_ID managed block — the MAIN checkout's
+# .github/hooks when installed (so the block lands where every hook's bootstrap
+# READS it from), else the dir beside this script. Preflight may run from a
+# linked worktree on resume, so the write target must not depend on the CWD.
+_canon_hooks_dir() {
+  local d g r
+  d="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
+  g="$(git rev-parse --git-common-dir 2>/dev/null || true)"
+  if [ -n "$g" ]; then
+    case "$g" in /*) ;; *) g="$PWD/$g" ;; esac
+    r="$(cd "$g/.." 2>/dev/null && pwd || true)"
+    if [ -n "$r" ] && [ -d "$r/.github/hooks" ]; then d="$r/.github/hooks"; fi
+  fi
+  printf '%s' "$d"
+}
 
 mode="inspect"
 auto_confirm="${AUTO_CONFIRM:-0}"
@@ -73,6 +102,24 @@ done
 [ "$auto_confirm" = "1" ] || auto_confirm=0
 
 RUNS_DIR="${RUNS_DIR:-runs}"
+# Anchor a RELATIVE RUNS_DIR to the main working tree so the run record is
+# single-homed across the main checkout and any linked worktree — a bare "runs"
+# resolves against the process CWD, splitting the record when preflight mints it
+# in the main checkout but later hooks fire from a sibling worktree. An absolute
+# RUNS_DIR (explicit override, e.g. the test harness) is respected verbatim.
+case "$RUNS_DIR" in
+  /*) ;;
+  *)
+    __rgcd="$(git rev-parse --git-common-dir 2>/dev/null || true)"
+    if [ -n "$__rgcd" ]; then
+      case "$__rgcd" in /*) ;; *) __rgcd="$PWD/$__rgcd" ;; esac
+      __rroot="$(cd "$__rgcd/.." 2>/dev/null && pwd || true)"
+      if [ -n "$__rroot" ]; then RUNS_DIR="$__rroot/$RUNS_DIR"; fi
+      unset __rroot
+    fi
+    unset __rgcd
+    ;;
+esac
 track="${TRACK_ID:-}"
 tasks="${TASKS:-}"
 base="${TRACK_BASE_REF:-${default_branch:-main}}"
@@ -235,7 +282,7 @@ if [ "$mode" = "persist" ]; then
   # executing-parallel-tracks per-worker value) still wins. Guarded by the
   # track-env.base.sh marker so this only ever fires inside a real INSTALLED hooks
   # dir — never in the skill's scripts/ source mirror that unit tests run in-place.
-  _env_dir="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
+  _env_dir="$(_canon_hooks_dir)"
   if [ -f "$_env_dir/track-env.base.sh" ]; then
     env_file="$_env_dir/track-env.sh"
     _blk_begin="# >>> track-preflight RUN_ID (managed - do not edit) >>>"
@@ -286,7 +333,7 @@ if [ "$mode" = "complete" ]; then
   # Retire the persisted RUN_ID activation block (written at --persist) so a finished
   # run stops steering the recorder hooks and can't bleed into an unrelated later run.
   # Same installed-hooks guard as --persist (skip the scripts/ source mirror).
-  _env_dir="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
+  _env_dir="$(_canon_hooks_dir)"
   if [ -f "$_env_dir/track-env.base.sh" ]; then
     env_file="$_env_dir/track-env.sh"
     _blk_begin="# >>> track-preflight RUN_ID (managed - do not edit) >>>"
