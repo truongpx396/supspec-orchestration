@@ -42,8 +42,8 @@
 #   track-audit.sh --warn-only  never exit non-zero (report, don't block)
 #   track-audit.sh --hook     Stop-hook mode (requires TRACK_AUDIT=1)
 #
-# Env: RUN_ID, RUNS_DIR, TRACK_BASE_REF, TRACK_FAIL_PATTERN, TRACK_TRUST_BOUNDARY_PATTERN,
-#      TRACK_AUDIT (enables --hook blocking)
+# Env: RUN_ID, RUNS_DIR, TRACK_BASE_REF, TRACK_DEFAULT_BRANCH, TRACK_FAIL_PATTERN,
+#      TRACK_TRUST_BOUNDARY_PATTERN, TRACK_AUDIT (enables --hook blocking)
 # Requires: jq, git. Keep runtime < 5s.
 set -eufo pipefail
 
@@ -98,6 +98,16 @@ add() { # add <id> <verdict> <message>
 
 j() { jq -r "$1" "$rec" 2>/dev/null || true; }
 
+# Selects a subagent dispatch out of trace[]. track-trace.sh stamps kind:"subagent" and
+# copies the RAW hook_event_name into .event ("SubagentStop", "subagentStart", …), so the
+# earlier `.event=="start" or .event=="stop"` test matched NOTHING on any real surface —
+# every check built on it degraded to "no subagent activity in trace[]" even on runs that
+# dispatched a dozen. Match the kind tag first, keeping the event-name spellings as a
+# fallback for records written before that tag existed.
+SUBAGENT_SEL='select(((.kind // "") == "subagent")
+  or ((((.event // "") | ascii_downcase)) as $e
+      | ($e | test("subagent")) or $e == "start" or $e == "stop"))'
+
 # Remediation per check id. Kept as a lookup rather than a field on every add() call
 # because the fix depends on WHICH invariant broke, not on the instance. These strings
 # are rendered into the PR body by track-report.sh, so a reviewer seeing a ⚠️ also sees
@@ -111,6 +121,7 @@ remediation_for() {
     I1) printf 'Isolate the work first: run using-git-worktrees to place it in a dedicated worktree on its own branch. Never work on the default branch; branch-in-place is allowed only when using-git-worktrees routes there AND that limitation was surfaced.' ;;
     I2) printf 'Re-run track-preflight.sh --persist for this track so the breadcrumb records the branch actually in use, or move the work to the approved branch. Do not let the approved plan and the real work diverge.' ;;
     I3) printf 'Run track-reconcile.sh at session start and after any compaction, and act on its resume_action. If it never runs, wire it to SessionStart (install-hooks.sh) — position must come from durable state, never from re-reading the worktree.' ;;
+    I4) printf 'After ANY compaction, re-read the pinned governance bundle from disk BEFORE dispatching the next subagent — a post-compaction brief built from memory carries constraints the compaction already dropped. If the finding is that the hook is unwired, run install-hooks.sh --apply so track-compact.sh records compactions and bundle re-reads.' ;;
     P1|P2) printf 'Stamp each gate boundary as you cross it: track-note.sh phase <mode> <step>. Without it a compacted session cannot re-anchor.' ;;
     M1) printf 'The stage-1/stage-2 reviewer must be a subagent distinct from the implementer. Re-review with a fresh agent if one agent did both.' ;;
     T1) printf 'Story mode requires the RED suite to fail BEFORE implementation. Confirm the tests were authored first; if they were not, this is not TDD.' ;;
@@ -197,7 +208,7 @@ fi
 # G3 — was governance stamped BEFORE the first subagent was dispatched?
 # A brief built before discovery is a brief with no constraints in it. Both timestamps
 # are durable, so this ordering is a fact, not an inference.
-first_sub_t="$(j '[.trace[]? | select(.event=="start" or .event=="stop") | .t] | sort | first // ""')"
+first_sub_t="$(j "[.trace[]? | $SUBAGENT_SEL | .t] | sort | first // \"\"")"
 gov_t="$(j '.governance_bundle.t // ""')"
 gov_phase_t="$(j '[.phase_log[]? | select(.step | test("governance"; "i")) | .t] | first // ""')"
 [ -n "$gov_phase_t" ] && [ -z "$gov_t" ] && gov_t="$gov_phase_t"
@@ -206,10 +217,13 @@ if [ -z "$first_sub_t" ]; then
   add G3 WARN "no subagent activity in trace[] — either none was dispatched, or the trace hook is not wired"
 elif [ -z "$gov_t" ]; then
   add G3 FAIL "subagents were dispatched but governance was never stamped — briefs cannot have carried the bundle"
-elif [ "$gov_t" \< "$first_sub_t" ]; then
-  add G3 PASS "governance stamped before the first subagent dispatch"
-else
+elif [ "$gov_t" \> "$first_sub_t" ]; then
   add G3 FAIL "first subagent dispatched at $first_sub_t, BEFORE governance was stamped at $gov_t"
+else
+  # Equal timestamps PASS deliberately. These stamps have one-second resolution, and a run
+  # that pins the bundle and then dispatches immediately lands in the same second routinely
+  # — testing for strict "earlier" would fail exactly the runs that did it fastest.
+  add G3 PASS "governance stamped no later than the first subagent dispatch"
 fi
 
 # G4 — trust-boundary surface must pull in the security instructions.
@@ -232,8 +246,17 @@ fi
 # ════════════════════════════════════════════════════════════════════════════════════
 
 cur_branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")"
-# Default branch: strip any remote prefix off the base ref (origin/main -> main).
-def_branch="${base##*/}"
+# Default branch. NOT derivable from $base: when TRACK_BASE_REF is unset, $base falls back
+# to the branch's own upstream (origin/<this-branch>), so stripping the remote prefix yields
+# the CURRENT branch — and I1 then fails every correctly-isolated run for being "on the
+# default branch". Ask the repo instead, and only trust $base when it was set explicitly.
+def_branch="${TRACK_DEFAULT_BRANCH:-}"
+[ -n "$def_branch" ] || def_branch="${TRACK_BASE_REF:+${TRACK_BASE_REF##*/}}"
+if [ -z "$def_branch" ]; then
+  def_branch="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)"
+  def_branch="${def_branch##*/}"
+fi
+[ -n "$def_branch" ] || def_branch="$(git config --get init.defaultBranch 2>/dev/null || true)"
 [ -n "$def_branch" ] || def_branch="main"
 
 # I1 — worked on the default branch at all? That is the failure Step 3 exists to prevent.
@@ -274,6 +297,62 @@ if [ "$(j '.last_reconcile.t // ""')" != "" ]; then
   add I3 PASS "reconcile ran and re-anchored from durable state"
 else
   add I3 WARN "no reconcile on record — either the SessionStart hook is unwired, or the run never re-anchored from durable state after a resume/compaction"
+fi
+
+# I4 — THE COMPACTION GATE. A compaction happens inside a live session, so no SessionStart
+# fires and nothing re-injects the governance excerpts every brief depends on. The failure
+# is invisible by construction: post-compaction briefs thin out while the model still
+# reports full compliance. track-compact.sh records both halves as hook-observed facts
+# (compactions[] and governance_reads[]), which turns the invariant into arithmetic:
+# between every compaction and the NEXT subagent dispatch there must be a bundle re-read.
+# Both timestamps are hook-written — the model authors neither — so this sits in the same
+# tier as G3, not with the self-reported phase stamps.
+compact_wired=0
+for _f in .claude/settings.json .github/hooks/track-hooks.json .vscode/hooks.json; do
+  [ -f "$_f" ] && grep -q 'track-compact' "$_f" 2>/dev/null && { compact_wired=1; break; }
+done
+n_compact="$(j '.compactions | length // 0')"; n_compact="${n_compact:-0}"
+[ "$n_compact" = "null" ] && n_compact=0
+
+if [ "$n_compact" -eq 0 ]; then
+  if [ "$compact_wired" -eq 1 ]; then
+    add I4 PASS "no compaction during this run (track-compact.sh is wired, so this is a real negative — not an unobserved one)"
+  else
+    add I4 WARN "compaction resilience unverifiable — track-compact.sh is not wired, so a compaction would leave no trace and the post-compaction re-read cannot be checked"
+  fi
+elif [ -z "$gov_path" ]; then
+  add I4 WARN "$n_compact compaction(s) recorded but no governance bundle was ever pinned — there is no path a re-read could be recognised against (see G1)"
+else
+  # For each compaction: find the first subagent dispatch after it, then require a bundle
+  # read strictly between the two. No dispatch after a compaction is fine — nothing was
+  # briefed, so nothing could have been briefed thin.
+  violations="$(jq -r '
+    def times(f): [f] | map(select(. != null and . != "")) | sort;
+    (times(.compactions[]?.t))      as $c |
+    (times(.governance_reads[]?.t)) as $r |
+    (times(.trace[]? | '"$SUBAGENT_SEL"' | .t)) as $d |
+    [ $c[] as $ct
+      | ([$d[] | select(. > $ct)] | first) as $next
+      | select($next != null)
+      | select( ([$r[] | select(. > $ct and . < $next)] | length) == 0 )
+      | "\($ct)→\($next)" ]
+    | join(", ")' "$rec" 2>/dev/null || true)"
+  # How many compactions were actually followed by a dispatch? A compaction with nothing
+  # briefed after it passes for a different reason than one that re-read the bundle, and
+  # saying "each was followed by a re-read" when nothing was dispatched would overstate.
+  n_briefed="$(jq -r '
+    def times(f): [f] | map(select(. != null and . != "")) | sort;
+    (times(.compactions[]?.t)) as $c |
+    (times(.trace[]? | '"$SUBAGENT_SEL"' | .t)) as $d |
+    [ $c[] as $ct | select( ([$d[] | select(. > $ct)] | length) > 0 ) ] | length' "$rec" 2>/dev/null || echo 0)"
+  n_briefed="${n_briefed:-0}"; [ "$n_briefed" = "null" ] && n_briefed=0
+  if [ -n "$violations" ]; then
+    add I4 FAIL "a subagent was dispatched after a compaction with NO bundle re-read in between ($violations) — that brief cannot have carried the governance constraints"
+  elif [ "$n_briefed" -eq 0 ]; then
+    add I4 PASS "$n_compact compaction(s), none followed by a subagent dispatch — no brief could have been built from dropped context"
+  else
+    add I4 PASS "$n_compact compaction(s); each of the $n_briefed followed by a dispatch had a governance-bundle re-read in between"
+  fi
 fi
 
 # ════════════════════════════════════════════════════════════════════════════════════
@@ -440,7 +519,7 @@ fi
 # ════════════════════════════════════════════════════════════════════════════════════
 
 MANUAL_ITEMS="A5|maker briefs embed governance CONTENT, not filenames — open a real dispatch and look
-B2|after any compaction, the bundle was RE-READ from disk before the next dispatch
+B2|the post-compaction re-read was USED — I4 proves the bundle was re-read from disk before the next dispatch, never that the brief then carried it
 C2|in scaffold mode the controller applied subagent output, never authored it itself
 C3|review applied the governance rubric, not a generic 'looks good'
 D1|the RED batch failed for the RIGHT reason (unmet expectation, not a typo/import error)
@@ -506,7 +585,7 @@ else
       fi
     done <<<"$results"
     printf '\n  NOT CHECKED HERE — the highest-value items no artifact can settle.\n'
-    printf '  Full list (12 human-only checks): tests/prompt-level-checklist.md\n'
+    printf '  Full list (13 human-only checks): tests/prompt-level-checklist.md\n'
     while IFS='|' read -r mid mtxt; do
       [ -n "${mid:-}" ] || continue
       printf '    %-4s %s\n' "$mid" "$mtxt"

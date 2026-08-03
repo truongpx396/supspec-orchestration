@@ -1,6 +1,6 @@
 # Prompt-Level Invariant Checklist
 
-*13 items automated · 3 partly automated · 12 human-only*
+*11 items automated · 4 partly automated · 13 human-only*
 
 **Most of this list is now automated — run [`../scripts/track-audit.sh`](../scripts/track-audit.sh)
 first.** It re-derives every ⚙️-marked item below from durable artifacts (the run record, the
@@ -33,6 +33,7 @@ What a reviewer sees in the PR body when a step is missed:
 |---|---|
 | 1 Preflight & confirm | ⚙️ `I2` (no breadcrumb) |
 | 2 Reconcile / resume | ⚙️ `I3` (no `last_reconcile` stamp) |
+| — Compaction mid-run | ⚙️ `I4` (a dispatch after a compaction with no bundle re-read in between) |
 | 3 Isolate | ⚙️ `I1` (on the default branch → FAIL; branch-in-place → WARN) |
 | 4 Governance gate | ⚙️ `G1`–`G4` |
 | 4 Mode guard + core | ⚙️ `P1`/`P2`, `T1`, `T2` |
@@ -40,7 +41,7 @@ What a reviewer sees in the PR body when a step is missed:
 | 6 Evidence gate | ⚙️ `E2` + the evidence table + compliance warnings |
 | 7 Run record | rendered in the Auto block |
 | 8 Terminal state | ⚙️ `F1` |
-| **the whole bundle** | 🏗 CI (`agent-pr-audit.yml`) — a run that skipped everything produces *no* Auto block, and a reporter cannot report on its own absence, so the check lives outside the agent |
+| **the whole bundle** | 🏗 CI (`agent-pr-audit.yml`) — a run that skipped everything produces *no* Auto block, and a reporter cannot report on its own absence, so the check lives outside the agent. Scope comes from five signals, not the agent's own `agent-generated` label: a run that skips the bundle also skips the labeling step, so the load-bearing signal is the harness-written `Co-Authored-By` commit trailer. CI also cross-checks the block's declared counts against its rendered rows, since a hand-edited block is the last way a failing audit reaches a reviewer looking clean |
 
 ---
 
@@ -72,9 +73,11 @@ What a reviewer sees in the PR body when a step is missed:
 
 - [ ] ⚙️ **B1** `[P1, P2]` — `phase` was stamped, and `phase_log[]` covers the canonical gate
       sequence for the recorded core.
-- [ ] ✋ **B2** — If the session was compacted: the bundle was **re-read from disk** before the next
-      dispatch. The one that decays invisibly — post-compaction briefs get thinner while the model
-      reports full compliance. **The highest-value manual check on this list.**
+- [ ] ⚙️✋ **B2** `[I4]` — If the session was compacted: the bundle was **re-read from disk** before
+      the next dispatch. `track-compact.sh` records both halves as hook-observed facts
+      (`compactions[]` from `PostCompact`, `governance_reads[]` from `PostToolUse`), so the audit
+      proves the re-read happened. What it still cannot prove is that the re-read was **used** —
+      that the next brief actually carried those constraints. Read one post-compaction dispatch.
 - [ ] ✋ **B3** — After any resume, `track-reconcile.sh` ran and its `resume_action` was **acted on**,
       not merely printed.
 - [ ] ✋ **B4** — Position was never rebuilt by reading the worktree ("let me look at what's there and

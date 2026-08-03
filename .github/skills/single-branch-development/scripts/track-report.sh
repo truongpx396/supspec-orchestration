@@ -253,7 +253,14 @@ if [ -f "$_audit" ]; then
       "**\(.summary.pass) passed · \(.summary.warn) warning(s) · \(.summary.fail) failure(s)**"
       + (if .summary.fail > 0 then "  ❌ **blocking — this PR should not have been opened**"
          elif .summary.warn > 0 then "  ⚠️ review the warnings below"
-         else "  ✅ every mechanically-checkable invariant holds" end)')"
+         else "  ✅ every *mechanically-checkable* invariant holds" end)')"
+    # Scope caveat — ALWAYS visible, never tucked inside the <details> below. A reader who
+    # sees only a green count reads it as "the run followed the pipeline"; what it actually
+    # means is "nothing derivable from an artifact contradicts that". The gap between those
+    # two sentences is where every silent failure this bundle exists to catch actually
+    # lives, so it is stated inline rather than left one click away.
+    printf -- '- ⚠️ **Not a clean bill of health.** %s further invariant(s) were checked by **no machine** — including whether subagent briefs carried governance *content* rather than filenames, and whether the bundle was re-read from disk after a compaction. A clean audit is necessary, not sufficient.\n' \
+      "$(printf '%s' "$_aj" | jq -r '.manual | length')"
     if printf '%s' "$_aj" | jq -e '[.checks[] | select(.verdict != "PASS")] | length > 0' >/dev/null 2>&1; then
       printf '\n| | Check | Finding | How to clear it |\n|---|---|---|---|\n'
       printf '%s' "$_aj" | jq -r '
@@ -262,9 +269,13 @@ if [ -f "$_audit" ]; then
     fi
     # The honesty rule carries into the PR: say what was NOT checked, so a green audit is
     # never mistaken for a full verification.
-    printf '\n<details><summary>Not checked mechanically (%s items — audit by hand)</summary>\n\n' \
+    printf '\n<details><summary>⚠️ The %s invariants NOT checked mechanically — a human must confirm these</summary>\n\n' \
       "$(printf '%s' "$_aj" | jq -r '.manual | length')"
     printf '%s' "$_aj" | jq -r '.manual[] | "- **\(.id)** — \(.check)"'
+    # Second-order caveat: even some PASSing rows above rest on stamps the model wrote
+    # itself. Naming which ones keeps a reviewer from reading the whole table as one
+    # uniform grade of proof.
+    printf '\n_Also note the checks above are not all equally strong. `I1`/`I2`/`T2` (git state), `G1`-`G4` (bundle vs. the real diff), `G3`/`M1` (hook-written `trace[]`) and `T1`/`E1`/`E2` (hook-written `evidence[]`) are derived from artifacts the model does not author. `P1`/`P2` (phase stamps) and `F1` (terminal status) read stamps the model wrote itself via `track-note.sh` — they detect an omitted step, not a misreported one._\n'
     printf '\n_Full list: `tests/prompt-level-checklist.md`. A clean audit is necessary, not sufficient._\n'
     printf '</details>\n'
   fi

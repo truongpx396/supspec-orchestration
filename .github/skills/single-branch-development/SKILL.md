@@ -78,7 +78,9 @@ which increment you were on, your governance excerpts. Three habits make the run
 3. **Re-anchor after any compaction**: re-run `track-reconcile.sh`, act on its `resume_action`, and
    re-read `runs/<RUN_ID>.governance.md` before the next dispatch. Rebuilding position by *reading
    the worktree* is the failure Step 2 exists to prevent — that prohibition applies just as much
-   after a compaction as after a crash.
+   after a compaction as after a crash. **This one is now audited, not trusted:** `track-compact.sh`
+   records the compaction and the re-read, and `track-audit.sh`'s `I4` fails a run that dispatched a
+   subagent after a compaction without re-reading the bundle in between.
 
 ## Pipeline (One Branch)
 
@@ -218,10 +220,12 @@ subagent vs ⚙️ script).
    same evidence you did instead of taking "I followed the pipeline" on trust. The unchecked
    remainder is yours to audit against
    [`tests/prompt-level-checklist.md`](tests/prompt-level-checklist.md).
-   **Label the PR `agent-generated`** (`gh pr create --draft … --label agent-generated`): CI keys on
-   it to assert the Auto block is actually present and declares no blocking failure. Skipping the
+   **Label the PR `agent-generated`** (`gh pr create --draft … --label agent-generated`): CI asserts
+   the Auto block is present, internally consistent, and declares no blocking failure. Skipping the
    whole bundle produces no Auto block at all, and only a check *outside* the agent can see that
-   absence — a reporter cannot report on its own absence.
+   absence — a reporter cannot report on its own absence. The label is **not** what makes the gate
+   fire: `agent-pr-audit.yml` also detects the harness-written `Co-Authored-By` trailer on your
+   commits, so omitting the label does not opt you out. It only makes the scope explicit.
    **Never open a draft PR with an unaddressed ⚠️.** Once the PR is open, run `track-preflight.sh --complete` to stamp
    `completed_utc` + `duration_secs` (now − `created_utc`) onto the breadcrumb — write-once, the one
    deliberate boundary that knows the run's total wall-clock (a per-event hook never sees PR handoff).
