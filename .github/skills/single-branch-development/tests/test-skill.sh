@@ -1866,6 +1866,35 @@ else
   fail "struct: CI detection does not rely solely on the agent's self-applied label"
 fi
 
+# Meta-work exemption: the repo that DEVELOPS the bundle cannot run the bundle's pipeline
+# for its own maintenance, so tooling PRs would go permanently red — and an always-red check
+# trains people to ignore it. The waiver must be narrow (all files tooling), fail closed (an
+# unreadable file list exempts nothing), and announce itself instead of passing quietly.
+if grep -q 'META_PATHS_RE' "$AGENT_WF" 2>/dev/null \
+   && grep -q 'meta_only' "$AGENT_WF" 2>/dev/null \
+   && grep -q 'GITHUB_STEP_SUMMARY' "$AGENT_WF" 2>/dev/null; then
+  pass "struct: CI waives the Auto block for meta-work and logs the waiver"
+else
+  fail "struct: CI waives the Auto block for meta-work and logs the waiver"
+fi
+
+# The waiver must cover PRESENCE only. If a block IS present it still goes through the
+# consistency + no-blocking-failure checks, so a waived PR cannot smuggle a broken block.
+if grep -qE 'META_ONLY.*=.*"true".*&&.*!.*grep -qF "\$marker"' "$AGENT_WF" 2>/dev/null; then
+  pass "struct: the meta waiver applies only when no Auto block is present"
+else
+  fail "struct: the meta waiver applies only when no Auto block is present"
+fi
+
+# A waived PR that edits the gates themselves is changing the enforcement while exempt from
+# it — the one abuse the exemption makes possible. It must be called out, not left implicit.
+if grep -q 'GATE_PATHS_RE' "$AGENT_WF" 2>/dev/null \
+   && grep -q 'modifies the enforcement itself' "$AGENT_WF" 2>/dev/null; then
+  pass "struct: a waived PR touching the gates is flagged in the summary"
+else
+  fail "struct: a waived PR touching the gates is flagged in the summary"
+fi
+
 # A hand-edited Auto block is the last way a failing audit reaches a reviewer looking clean:
 # every non-PASS check renders exactly one table row, so the declared counts and the rendered
 # rows must agree or the block was edited after it was generated.

@@ -21,10 +21,21 @@ name: agent-pr-audit
 # hand-written PR and be switched off within a week, and a gate nobody can live with
 # protects nothing.
 #
-# RESIDUAL (stated, not papered over): a PR with no label, no agent trailer, no bot author,
-# no agent branch prefix and no track-report marker is indistinguishable from human work at
-# this layer, and is skipped. Closing that last gap needs a signal from outside the PR — a
-# dedicated bot identity for agent pushes, or branch protection — not more parsing here.
+# META-WORK EXEMPTION: a PR whose every changed file is tooling (META_PATHS_RE) is
+# maintenance ON this pipeline rather than work done THROUGH it — it cannot produce a run
+# record, so the Auto-block requirement is unsatisfiable by construction. Those PRs waive
+# the block's PRESENCE only, never its integrity, and the waiver announces itself in the job
+# summary. A permanently-red check is worse than a scoped one: it trains people to ignore it.
+#
+# RESIDUALS (stated, not papered over):
+#   - A PR with no label, no agent trailer, no bot author, no agent branch prefix and no
+#     track-report marker is indistinguishable from human work here, and is skipped. Closing
+#     that needs a signal from outside the PR — a dedicated bot identity for agent pushes, or
+#     branch protection — not more parsing.
+#   - The exemption is a surface an agent could aim for by scoping its diff to tooling only.
+#     That buys no product-code cover (a meta-only PR changes no product code by definition),
+#     but it DOES cover edits to the gates themselves — so the waiver flags that case loudly
+#     rather than pretending it cannot happen.
 
 on:
   pull_request:
@@ -39,6 +50,12 @@ env:
   AGENT_LABEL: agent-generated
   AGENT_TRAILER_RE: '^[[:space:]]*Co-Authored-By:.*(claude|copilot|cursor|devin|codex|gemini)'
   AGENT_BRANCH_RE: '^(track|agent|claude|codex|copilot|devin)/'
+  # Tooling paths. A PR touching ONLY these is maintenance ON the pipeline rather than work
+  # done THROUGH it, and cannot produce a run record — see the meta-work exemption below.
+  META_PATHS_RE: '^(\.github/(skills|workflows|instructions|hooks)/|README\.md$|CLAUDE\.md$|\.gitignore$)'
+  # The subset of tooling that IS the enforcement. A waived PR touching these is weakening
+  # the gates while exempt from them, so the waiver names it explicitly.
+  GATE_PATHS_RE: '(track-audit\.sh|track-report\.sh|track-compact\.sh|track-evidence-gate\.sh|track-guard\.sh|agent-pr-audit\.yml)'
 
 jobs:
   # ── Is this an agent PR? Decided from signals the agent does not all control. ──────────
@@ -48,6 +65,9 @@ jobs:
       is_agent: ${{ steps.d.outputs.is_agent }}
       labeled: ${{ steps.d.outputs.labeled }}
       why: ${{ steps.d.outputs.why }}
+      meta_only: ${{ steps.d.outputs.meta_only }}
+      touches_gates: ${{ steps.d.outputs.touches_gates }}
+      files_n: ${{ steps.d.outputs.files_n }}
     steps:
       - id: d
         env:
@@ -103,12 +123,38 @@ jobs:
             mark "PR body carries a track-report marker"
           fi
 
+          # --- meta-work exemption ---------------------------------------------------
+          # The repo that DEVELOPS this bundle cannot run the bundle's pipeline for its own
+          # maintenance: a skill/CI/docs change produces no run record, so track-report.sh
+          # has nothing to render and the Auto-block requirement can never be satisfied.
+          # Without an exemption every tooling PR here goes permanently red — and a check
+          # that is always red is one people learn to ignore, which is precisely the failure
+          # this bundle exists to prevent.
+          #
+          # Kept deliberately narrow: it applies only when EVERY changed file is tooling,
+          # it waives only the PRESENCE of the Auto block (a block that IS present is still
+          # validated), and it fails CLOSED — an unreadable file list exempts nothing.
+          meta_only=false; touches_gates=false; files_n=0
+          files="$(gh api --paginate "repos/$REPO/pulls/$PR_NUM/files" \
+                     --jq '.[].filename' 2>/dev/null || true)"
+          if [ -n "$files" ]; then
+            files_n="$(printf '%s\n' "$files" | grep -c . || true)"
+            if [ -z "$(printf '%s\n' "$files" | grep -vE "$META_PATHS_RE" || true)" ]; then
+              meta_only=true
+            fi
+            printf '%s\n' "$files" | grep -qE "$GATE_PATHS_RE" && touches_gates=true
+          fi
+
           {
-            printf 'is_agent=%s\n' "$is_agent"
-            printf 'labeled=%s\n'  "$labeled"
-            printf 'why=%s\n'      "${why:-no agent signal}"
+            printf 'is_agent=%s\n'      "$is_agent"
+            printf 'labeled=%s\n'       "$labeled"
+            printf 'why=%s\n'           "${why:-no agent signal}"
+            printf 'meta_only=%s\n'     "$meta_only"
+            printf 'touches_gates=%s\n' "$touches_gates"
+            printf 'files_n=%s\n'       "${files_n:-0}"
           } >> "$GITHUB_OUTPUT"
           echo "detection: is_agent=$is_agent (${why:-no agent signal})"
+          echo "scope: ${files_n:-0} file(s), meta_only=$meta_only, touches_gates=$touches_gates"
 
   audit:
     needs: detect
@@ -131,8 +177,37 @@ jobs:
           # a PR description is attacker-controlled text, and `${{ }}` inside a run block
           # is a shell-injection sink.
           PR_BODY: ${{ github.event.pull_request.body }}
+          META_ONLY: ${{ needs.detect.outputs.meta_only }}
+          TOUCHES_GATES: ${{ needs.detect.outputs.touches_gates }}
+          FILES_N: ${{ needs.detect.outputs.files_n }}
         run: |
           marker='<!-- END track-report auto block -->'
+
+          # Meta-work exemption. Waives ONLY the requirement that the block be present; a
+          # block that is present still goes through the consistency + no-blocking-failure
+          # checks in the next step. The waiver is written to the job summary and raised as
+          # a warning annotation, so it lands on the PR rather than staying buried in a log.
+          if [ "$META_ONLY" = "true" ] && ! printf '%s' "${PR_BODY:-}" | grep -qF "$marker"; then
+            {
+              echo "### ⚠️ Auto-block requirement WAIVED — meta-work exemption"
+              echo
+              echo "All ${FILES_N} changed file(s) are tooling (\`META_PATHS_RE\`), so this PR is"
+              echo "maintenance **on** the pipeline rather than work done **through** it. There is no"
+              echo "run record to render, and requiring one would leave every tooling PR permanently red."
+              echo
+              echo "**This means none of the discipline gates were enforced on this change.**"
+              if [ "$TOUCHES_GATES" = "true" ]; then
+                echo
+                echo "> 🔴 **This PR modifies the enforcement itself** (\`GATE_PATHS_RE\` matched)."
+                echo "> It is changing the gates while exempt from them. Read the diff to"
+                echo "> \`track-audit.sh\` / \`track-report.sh\` / \`agent-pr-audit.yml\` with that in mind:"
+                echo "> a weakened check and a fixed check look identical in a green build."
+              fi
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::Auto-block requirement waived — all ${FILES_N} changed file(s) are tooling. No discipline gate was enforced on this PR; see the job summary."
+            exit 0
+          fi
+
           if [ -z "${PR_BODY:-}" ]; then
             echo "::error::This PR was detected as agent-authored but has an EMPTY body."
             echo "Expected the track-report.sh Auto block (files changed, evidence," \
