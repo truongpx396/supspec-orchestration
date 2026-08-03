@@ -972,6 +972,54 @@ else
   fail "audit: publishes its NOT-CHECKED list"
 fi
 
+# I4 — the compaction gate. Once track-compact.sh made both halves durable, the checklist's
+# highest-value MANUAL item became arithmetic; all four of its states are pinned here.
+aud_compact() { # aud_compact <run-id> <compactions> <reads> <trace>
+  aud_seed "$1"
+  jq --argjson c "$2" --argjson r "$3" --argjson tr "$4" \
+     '.compactions = $c | .governance_reads = $r | .trace = $tr' \
+     "$AUD_RUNS/$1.json" > "$AUD_RUNS/$1.tmp" && mv "$AUD_RUNS/$1.tmp" "$AUD_RUNS/$1.json"
+}
+_disp='[{"t":"2026-01-01T11:00:00Z","kind":"subagent","event":"SubagentStop","agent_id":"a1"}]'
+
+# A dispatch after a compaction with no re-read in between — the silent failure itself.
+aud_compact i4bad '[{"t":"2026-01-01T10:00:00Z"}]' '[]' "$_disp"
+[ "$(aud_verdict i4bad I4)" = "FAIL" ] \
+  && pass "audit: I4 fails a dispatch after a compaction with no bundle re-read" \
+  || fail "audit: I4 fails a dispatch after a compaction with no bundle re-read"
+
+# A re-read between the two clears it.
+aud_compact i4good '[{"t":"2026-01-01T10:00:00Z"}]' '[{"t":"2026-01-01T10:30:00Z"}]' "$_disp"
+[ "$(aud_verdict i4good I4)" = "PASS" ] \
+  && pass "audit: I4 passes when the bundle was re-read before the next dispatch" \
+  || fail "audit: I4 passes when the bundle was re-read before the next dispatch"
+
+# A compaction with nothing dispatched after it briefed nothing — not a violation.
+aud_compact i4nodisp '[{"t":"2026-01-01T12:00:00Z"}]' '[]' "$_disp"
+[ "$(aud_verdict i4nodisp I4)" = "PASS" ] \
+  && pass "audit: I4 does not fault a compaction with no dispatch after it" \
+  || fail "audit: I4 does not fault a compaction with no dispatch after it"
+
+# Absence of compactions must never read as proof. With the hook unwired a compaction would
+# leave no trace at all, so the honest verdict is WARN — this is the honesty rule in code.
+[ "$(aud_verdict clean I4)" = "WARN" ] \
+  && pass "audit: I4 warns rather than passing when track-compact.sh is unwired" \
+  || fail "audit: I4 warns rather than passing when track-compact.sh is unwired"
+
+# Regression: track-trace.sh stores the RAW hook event name ("SubagentStop"), never
+# "start"/"stop". The old selector matched neither, so every check reading trace[] for a
+# dispatch — G3 above all — silently reported "no subagent activity" on real runs.
+aud_seed g3real
+jq '.trace = [{"t":"2026-01-01T00:30:00Z","kind":"subagent","event":"SubagentStop","agent_id":"a1"},
+              {"t":"2026-01-01T00:40:00Z","kind":"subagent","event":"SubagentStop","agent_id":"a2"}]' \
+  "$AUD_RUNS/g3real.json" > "$AUD_RUNS/g3real.tmp" && mv "$AUD_RUNS/g3real.tmp" "$AUD_RUNS/g3real.json"
+_g3m="$(aud_json g3real | jq -r '.checks[]|select(.id=="G3")|.message')"
+if [ "$(aud_verdict g3real G3)" = "PASS" ] && ! printf '%s' "$_g3m" | grep -q 'no subagent activity'; then
+  pass "audit: G3 recognises real SubagentStop trace entries, not only 'start'/'stop'"
+else
+  fail "audit: G3 recognises real SubagentStop trace entries (got: $_g3m)"
+fi
+
 # Hook mode: opt-in, non-looping, and silent when clean.
 # NOTE: capture output into a variable, never `script | grep -q`. This suite runs with
 # `set -o pipefail`, and grep -q exits on its FIRST match — the still-writing script then
@@ -1007,6 +1055,58 @@ EMPTY_AUD="$(mktemp -d)"
 RUNS_DIR="$EMPTY_AUD" bash "$AUDIT" >/dev/null 2>&1 \
   && pass "audit: no RUN_ID -> silent no-op" || fail "audit: no RUN_ID -> silent no-op"
 rm -rf "$AUD_RUNS" "$EMPTY_AUD"
+
+section "track-compact.sh"
+# The recorder behind I4. It must capture a re-read in either form a model actually uses,
+# ignore everything else, and never invent a read it did not observe.
+CMP="$SCRIPTS_DIR/track-compact.sh"
+CMP_RUNS="$(mktemp -d)"
+cmp_fire() { printf '%s' "$1" | RUN_ID=c RUNS_DIR="$CMP_RUNS" bash "$CMP" >/dev/null 2>&1 || true; }
+cmp_n() { jq -r "$1" "$CMP_RUNS/c.json" 2>/dev/null || echo ERR; }
+printf '{"run_id":"c","v":1,"trace":[],"evidence":[],"tool_calls":0,"governance_bundle":{"path":"runs/c.governance.md","sha":"x"}}\n' > "$CMP_RUNS/c.json"
+
+cmp_fire '{"hook_event_name":"PostCompact","trigger":"auto"}'
+[ "$(cmp_n '.compactions|length')" = "1" ] \
+  && pass "compact: PostCompact stamps compactions[]" || fail "compact: PostCompact stamps compactions[]"
+[ "$(cmp_n '.compactions[0].trigger')" = "auto" ] \
+  && pass "compact: the compaction trigger is preserved" || fail "compact: the compaction trigger is preserved"
+
+cmp_fire '{"hook_event_name":"PostToolUse","tool_name":"Read","tool_input":{"file_path":"runs/c.governance.md"}}'
+[ "$(cmp_n '.governance_reads|length')" = "1" ] \
+  && pass "compact: a Read of the pinned bundle is recorded" || fail "compact: a Read of the pinned bundle is recorded"
+
+# `cat runs/<id>.governance.md` is just as legitimate a re-read as the Read tool.
+cmp_fire '{"hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"cat runs/c.governance.md"}}'
+[ "$(cmp_n '.governance_reads|length')" = "2" ] \
+  && pass "compact: a Bash re-read of the bundle counts too" || fail "compact: a Bash re-read of the bundle counts too"
+
+cmp_fire '{"hook_event_name":"PostToolUse","tool_name":"Read","tool_input":{"file_path":"src/main.go"}}'
+[ "$(cmp_n '.governance_reads|length')" = "2" ] \
+  && pass "compact: an unrelated Read is ignored" || fail "compact: an unrelated Read is ignored"
+
+cmp_fire '{"hook_event_name":"Notification"}'
+[ "$(cmp_n '.compactions|length')" = "1" ] \
+  && pass "compact: an unrelated event is a no-op" || fail "compact: an unrelated event is a no-op"
+
+# No bundle pinned -> nothing a re-read could be recognised against; must not invent one.
+printf '{"run_id":"d","v":1,"trace":[],"evidence":[],"tool_calls":0}\n' > "$CMP_RUNS/d.json"
+printf '%s' '{"hook_event_name":"PostToolUse","tool_name":"Read","tool_input":{"file_path":"runs/d.governance.md"}}' \
+  | RUN_ID=d RUNS_DIR="$CMP_RUNS" bash "$CMP" >/dev/null 2>&1 || true
+[ "$(jq -r '.governance_reads // [] | length' "$CMP_RUNS/d.json")" = "0" ] \
+  && pass "compact: no governance pin -> no read recorded" || fail "compact: no governance pin -> no read recorded"
+
+# Bundle convention: no RUN_ID -> silent no-op, writes nothing.
+printf '%s' '{"hook_event_name":"PostCompact"}' | RUNS_DIR="$CMP_RUNS" bash "$CMP" >/dev/null 2>&1 \
+  && pass "compact: no RUN_ID -> silent no-op" || fail "compact: no RUN_ID -> silent no-op"
+rm -rf "$CMP_RUNS"
+
+# Wired on BOTH surfaces, or the recorder never runs and I4 can only ever WARN.
+if grep -q 'track-compact' "$SCRIPT_DIR/../templates/claude-settings.json" 2>/dev/null \
+   && grep -q 'track-compact' "$SCRIPT_DIR/../templates/track-hooks.json" 2>/dev/null; then
+  pass "compact: wired in both the Claude Code and Copilot hook templates"
+else
+  fail "compact: wired in both the Claude Code and Copilot hook templates"
+fi
 
 section "track-tokens.sh"
 TOK_RUNS="$(mktemp -d)"; TOK_RID="tok-run"
@@ -1343,11 +1443,29 @@ else
 fi
 
 # The honesty rule must survive into the PR: never let a green audit read as full proof.
-if printf '%s' "$A_OUT" | grep -q 'Not checked mechanically' \
+# The scope limit has to be VISIBLE — a caveat only reachable by expanding a <details> is a
+# caveat most reviewers never see, so assert both the inline line and the expandable list.
+if printf '%s' "$A_OUT" | grep -q 'NOT checked mechanically' \
    && printf '%s' "$A_OUT" | grep -q 'necessary, not sufficient'; then
   pass "report: PR body states what the audit did NOT check"
 else
   fail "report: PR body states what the audit did NOT check"
+fi
+
+# The inline caveat must sit OUTSIDE the collapsed block (i.e. before <details> opens).
+_inline="$(printf '%s' "$A_OUT" | sed -n '/#### Discipline audit/,/<details>/p')"
+if printf '%s' "$_inline" | grep -q 'Not a clean bill of health'; then
+  pass "report: audit scope limit is stated inline, not hidden behind <details>"
+else
+  fail "report: audit scope limit is stated inline, not hidden behind <details>"
+fi
+
+# Not every PASS row is equally strong: phase/status rows read stamps the model wrote
+# itself. Saying so keeps the table from reading as one uniform grade of proof.
+if printf '%s' "$A_OUT" | grep -q 'stamps the model wrote itself'; then
+  pass "report: distinguishes artifact-derived checks from self-reported ones"
+else
+  fail "report: distinguishes artifact-derived checks from self-reported ones"
 fi
 
 # Markdown safety: a remediation containing a pipe must not break the table.
@@ -1730,17 +1848,51 @@ fi
 
 # Scoped to agent PRs only. A blanket rule would fail every hand-written PR and be
 # switched off within a week — a gate nobody can live with protects nothing.
-grep -q "contains(github.event.pull_request.labels" "$AGENT_WF" 2>/dev/null \
-  && pass "struct: CI gate is scoped to agent-generated PRs (human PRs untouched)" \
-  || fail "struct: CI gate is scoped to agent-generated PRs"
+if grep -q 'needs.detect.outputs.is_agent' "$AGENT_WF" 2>/dev/null \
+   && grep -q 'AGENT_LABEL' "$AGENT_WF" 2>/dev/null; then
+  pass "struct: CI gate is scoped to agent PRs (human PRs untouched)"
+else
+  fail "struct: CI gate is scoped to agent PRs (human PRs untouched)"
+fi
+
+# ...but NOT on a signal the agent applies to itself. The label is written by the agent at
+# `gh pr create`, so a run that skipped the bundle also skips the labeling step and the PR
+# most needing an audit is the one that opts itself out. Detection must include at least one
+# signal produced OUTSIDE the skill — the harness-written Co-Authored-By commit trailer.
+if grep -q 'Co-Authored-By' "$AGENT_WF" 2>/dev/null \
+   && grep -q 'pulls/\$PR_NUM/commits' "$AGENT_WF" 2>/dev/null; then
+  pass "struct: CI detection does not rely solely on the agent's self-applied label"
+else
+  fail "struct: CI detection does not rely solely on the agent's self-applied label"
+fi
+
+# A hand-edited Auto block is the last way a failing audit reaches a reviewer looking clean:
+# every non-PASS check renders exactly one table row, so the declared counts and the rendered
+# rows must agree or the block was edited after it was generated.
+if grep -q 'CONTRADICTS ITSELF' "$AGENT_WF" 2>/dev/null \
+   && grep -q 'fail_rows' "$AGENT_WF" 2>/dev/null \
+   && grep -q 'warn_rows' "$AGENT_WF" 2>/dev/null; then
+  pass "struct: CI gate cross-checks the audit's declared counts against its rendered rows"
+else
+  fail "struct: CI gate cross-checks the audit's declared counts against its rendered rows"
+fi
 
 # The PR body is attacker-controlled text: it must reach the script through the
 # environment, never via ${{ }} interpolation inside a run block (shell-injection sink).
+# Same for the fork-chosen branch name and the detection summary derived from it.
 if grep -q 'PR_BODY: \${{ github.event.pull_request.body }}' "$AGENT_WF" 2>/dev/null \
-   && ! grep -E '^\s+(echo|printf|grep).*\$\{\{ github.event.pull_request.body' "$AGENT_WF" >/dev/null 2>&1; then
-  pass "struct: CI gate passes the PR body via env, not inline interpolation"
+   && ! grep -E '^\s+(echo|printf|grep|if).*\$\{\{ *(github\.event\.pull_request\.(body|head\.ref|user)|needs\.detect\.outputs\.why)' "$AGENT_WF" >/dev/null 2>&1; then
+  pass "struct: CI gate passes attacker-controlled values via env, not inline interpolation"
 else
-  fail "struct: CI gate passes the PR body via env, not inline interpolation"
+  fail "struct: CI gate passes attacker-controlled values via env, not inline interpolation"
+fi
+
+# A green audit must not read as a full bill of health. The count of items no machine checked
+# has to be visible in the PR body itself, not folded away inside the collapsed <details>.
+if grep -q 'Not a clean bill of health' "$REPORT" 2>/dev/null; then
+  pass "struct: report states the audit's scope limit inline, outside the collapsed block"
+else
+  fail "struct: report states the audit's scope limit inline, outside the collapsed block"
 fi
 
 # The skill must actually attach the label the gate keys on, or the gate never fires.

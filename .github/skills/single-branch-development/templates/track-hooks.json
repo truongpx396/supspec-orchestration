@@ -25,6 +25,18 @@
         "type": "command",
         "bash": "./.github/hooks/track-meter.sh",
         "timeoutSec": 5
+      },
+      {
+        "type": "command",
+        "bash": "./.github/hooks/track-compact.sh",
+        "timeoutSec": 5
+      }
+    ],
+    "postCompact": [
+      {
+        "type": "command",
+        "bash": "./.github/hooks/track-compact.sh",
+        "timeoutSec": 5
       }
     ],
     "subagentStart": [
