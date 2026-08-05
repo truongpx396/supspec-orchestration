@@ -207,6 +207,7 @@ Scripts are listed in the order they typically fire across a track's lifetime:
 |---|---|---|---|
 | `install-hooks.sh` *(repo-wide)* | skill-invoked (setup) | **Lifecycle** | 📦 Idempotent, consent-gated, drift-aware installer for the whole bundle |
 | `track-preflight.sh` *(per-track)* | skill-invoked (Step 1) | **Lifecycle** | 🎫 Mint or recover stable `RUN_ID`; check prerequisites; persist resume breadcrumb |
+| `track-deps.sh` *(per-track)* | skill-invoked (Step 1, via preflight) | **Lifecycle** | 🔒 Verify the repo's pinned tool versions (`skill-deps.json`) — fail hard on a required lock violation, warn on out-of-range when non-strict; result TTL-cached (`TRACK_DEPS_CACHE_TTL_HOURS`, default 72h) in `runs/.deps-cache.json` |
 | `track-reconcile.sh` *(per-track)* | `SessionStart` | **Lifecycle** | ♻️ Recover state from committed history + run record; stash untrusted work |
 | `track-guard.sh` *(repo-policy)* | `PreToolUse` | **Scope & guard** | 🛡️ Deny edits outside writable scope, frozen paths, artifacts, or destructive ops |
 | `track-evidence.sh` *(per-track)* | `PostToolUse` | **Evidence & quality** | 📸 Capture test output + code fingerprint — what the tool saw, not a model claim |
@@ -476,7 +477,7 @@ Grep any one surface → reconstruct the whole run. `runs/summary.md` aggregates
       SKILL.md
       references/                     # governance.md, hooks.md, scaffold/story/refactor-mode.md
       scripts/                        # canonical source for track-*.sh + install-hooks.sh
-      templates/                      # track-hooks.json, claude-settings.json, track-env.sh.example, pr-body.md
+      templates/                      # track-hooks.json, claude-settings.json, track-env.sh.example, pr-body.md, skill-deps.json
       tests/                          # test-skill.sh self-test harness
     executing-parallel-tracks/
       SKILL.md
@@ -583,6 +584,9 @@ Example value: `*.go:go-test;*.py:py;*.tsx:ts;*.ts:ts;migrations/*:pg-explain`
 | `TRACK_SENTINEL` | `1` | Scan staged diff for likely secrets/debug leftovers at Stop |
 | `TRACK_NOTIFY_WEBHOOK` | `""` | URL for best-effort completion webhook; empty = no notify |
 | `PREFLIGHT_REQUIRE_GH` | `1` | Require authenticated `gh` CLI at preflight (set `0` on bootstraps without a remote) |
+| `TRACK_DEPS_CACHE_TTL_HOURS` | `72` | How long a passing `skill-deps.json` version-lock probe is cached in `runs/.deps-cache.json` before re-checking (`0` = always re-probe) |
+| `TRACK_DEPS_STRICT` | `0` | `1` = an out-of-range (non-required) tool version fails preflight instead of only warning |
+| `TRACK_DEPS_MANIFEST` | `""` | Path to the version-lock manifest; empty = auto-discover `skill-deps.json` beside the hooks |
 
 ### 3️⃣ Invoke a skill
 Point your agent at the task and let the skill drive. On **Copilot**, reference the skill by name; on
@@ -631,7 +635,7 @@ bash .github/skills/executing-parallel-tracks/tests/test-skill.sh
 ```
 
 The test harnesses are a **documentation-contract fence + functional regression suite** in one:
-- **216 SBD tests** cover: preflight flag behavior (`--persist`, `--complete`, breadcrumb stamping), guard allow/deny decisions (scope, frozen paths, destructive ops, FF-push gating), evidence capture + gate (fingerprint freshness, stale detection, multi-kind), meter counting + hard-stop, trace schema, compaction/governance-read recording, audit invariants, sentinel pattern matching, report Auto-block rendering, run-record field completeness, token ceiling enforcement (`TRACK_MAX_TOKEN_ESTIMATE`), and structural checks on SKILL.md / hooks.md / templates.
+- **226 SBD tests** cover: preflight flag behavior (`--persist`, `--complete`, breadcrumb stamping), guard allow/deny decisions (scope, frozen paths, destructive ops, FF-push gating), evidence capture + gate (fingerprint freshness, stale detection, multi-kind), meter counting + hard-stop, trace schema, compaction/governance-read recording, audit invariants, sentinel pattern matching, dependency version-lock + probe cache (`skill-deps.json`, TTL caching, lock violations), report Auto-block rendering, run-record field completeness, token ceiling enforcement (`TRACK_MAX_TOKEN_ESTIMATE`), and structural checks on SKILL.md / hooks.md / templates.
 - **205 EPT tests** cover: SKILL.md structural integrity (Steps 0–7, gates, wave planner), manifest template completeness, run-record schema (trace[]/ skills[] separation), precheck ownership-overlap detection (disjoint / overlapping / shared hotspot / 3-way), and structural governance assertions.
 
 Both suites run on every push/PR via [`.github/workflows/skill-tests.yml`](.github/workflows/skill-tests.yml).

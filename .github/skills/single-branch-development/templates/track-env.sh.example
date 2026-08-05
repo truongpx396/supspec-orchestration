@@ -53,6 +53,15 @@ export RUNS_DIR="${RUNS_DIR:-runs}"                                   # [REPO-PO
 export PREFLIGHT_REQUIRE_GH="${PREFLIGHT_REQUIRE_GH:-1}"              # [REPO-POLICY] require authenticated gh (0 to waive on early setup runs)
 export PREFLIGHT_REQUIRE_TOOLCHAIN="${PREFLIGHT_REQUIRE_TOOLCHAIN:-}" # [TASK-DERIVED] comma-separated bins the task's languages need on PATH. e.g. "go,uv,node"
 
+# --- dependency version-lock (skill-deps.json) + probe cache -----------------
+# skill-deps.json (beside the hooks) pins tool versions so a client checkout uses versions
+# aligned with the skill (superpowers/speckit/git/jq/…). track-deps.sh probes each tool at
+# preflight and CACHES the result (runs/.deps-cache.json) so heavy `--version` calls are not
+# repeated every run. Cache invalidates on PATH change, manifest change, or TTL expiry.
+export TRACK_DEPS_CACHE_TTL_HOURS="${TRACK_DEPS_CACHE_TTL_HOURS:-72}" # [REPO-POLICY] hours to trust a cached probe (0 = always re-check)
+export TRACK_DEPS_STRICT="${TRACK_DEPS_STRICT:-0}"                  # [REPO-POLICY] 1 = an out-of-range pinned version hard-fails preflight; 0 = warn only
+export TRACK_DEPS_MANIFEST="${TRACK_DEPS_MANIFEST:-}"              # [REPO-POLICY] path to skill-deps.json; empty = auto (beside the hooks). Absent file = no-op
+
 # --- evidence gate -----------------------------------------------------------
 # [REPO-POLICY] TRACK_EVIDENCE_KINDS / TRACK_EVIDENCE_RULES are the repo's how-to-test
 # CATALOG — set once, do NOT regenerate per run. Use EITHER TRACK_TEST_CMD_PATTERN

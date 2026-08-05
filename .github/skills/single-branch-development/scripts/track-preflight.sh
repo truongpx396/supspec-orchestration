@@ -193,6 +193,30 @@ if [ -n "${PREFLIGHT_REQUIRE_TOOLCHAIN:-}" ]; then
   done
   IFS="$saved_ifs"
 fi
+
+# --- dependency version-lock (delegated to track-deps.sh; TTL-cached) --------------
+# Verify the repo's pinned tool versions (skill-deps.json) once per run. track-deps.sh
+# no-ops when no manifest is present (the lock is opt-in) and reuses a runs/-local TTL
+# cache so a heavy version probe does not re-run on every preflight. A REQUIRED dep that
+# is missing — or, under TRACK_DEPS_STRICT, out of range — folds into `missing` so it
+# blocks the start gate exactly like an absent toolchain bin.
+deps_configured=false; deps_ok=true; deps_viol=""; deps_warn=""
+deps_script="${BASH_SOURCE[0]%/*}/track-deps.sh"
+if [ -f "$deps_script" ]; then
+  deps_rc=0
+  deps_out="$(bash "$deps_script" --json 2>/dev/null)" || deps_rc=$?
+  if [ -n "${deps_out:-}" ]; then
+    # NOTE: jq's `//` treats BOTH null and `false` as empty, so `.ok // true` would
+    # wrongly yield true for a genuine ok:false. Read the raw value and normalize.
+    deps_configured="$(printf '%s' "$deps_out" | jq -r 'if .configured == true then "true" else "false" end' 2>/dev/null || echo false)"
+    deps_ok="$(printf '%s' "$deps_out" | jq -r 'if .ok == false then "false" else "true" end' 2>/dev/null || echo true)"
+    deps_viol="$(printf '%s' "$deps_out" | jq -r '(.violations // []) | join(",")' 2>/dev/null || true)"
+    deps_warn="$(printf '%s' "$deps_out" | jq -r '(.warnings // []) | join(",")' 2>/dev/null || true)"
+  fi
+  if [ "$deps_configured" = true ] && [ "$deps_ok" != true ]; then
+    missing="$missing deps(${deps_viol:-lock})"
+  fi
+fi
 missing="$(printf '%s' "$missing" | sed 's/^ *//')"
 
 # --- evidence-kind consistency (soft config check) ---------------------------------
@@ -373,6 +397,13 @@ fi
   else
     echo "  Evid. floor:  ⚠ TRACK_REQUIRED_EVIDENCE UNSET — gate is rules-only (no floor). Derive the mandatory kinds from the task's languages if any must run on every diff."
   fi
+  if [ "$deps_configured" = true ]; then
+    if [ "$deps_ok" = true ]; then
+      echo "  Deps lock:    OK (skill-deps.json verified${deps_warn:+ · warnings: $deps_warn})"
+    else
+      echo "  Deps lock:    ⚠ VIOLATION: $deps_viol  (pinned versions in skill-deps.json; TRACK_DEPS_STRICT=$([ "${TRACK_DEPS_STRICT:-0}" = 1 ] && echo on || echo off))"
+    fi
+  fi
   if [ "$prereq_ok" = true ]; then
     echo "  Prereqs:      OK (git ✓ · runs/ ✓ writable$([ "$require_gh" = 1 ] && echo ' · gh ✓ authed')${PREFLIGHT_REQUIRE_TOOLCHAIN:+ · $PREFLIGHT_REQUIRE_TOOLCHAIN ✓})"
     if [ "$auto_confirm" = 1 ]; then
@@ -397,10 +428,17 @@ jq -nc \
   --arg config_warn "$config_warn" \
   --arg allowed "$allowed_prefixes" --arg frozen "$frozen_paths" \
   --arg toolchain "$require_toolchain" --arg required_evidence "$required_evidence" \
+  --argjson deps_configured "$([ "$deps_configured" = true ] && echo true || echo false)" \
+  --argjson deps_ok "$([ "$deps_ok" = true ] && echo true || echo false)" \
+  --arg deps_viol "$deps_viol" --arg deps_warn "$deps_warn" \
   --argjson auto_confirm "$([ "$auto_confirm" = 1 ] && echo true || echo false)" \
   '{run_id:$run_id, track:$track, tasks:$tasks, branch:$branch, base_ref:$base,
     mode:(if $resume then "resume" else "start" end),
     prereq_ok:$prereq_ok,
+    deps_configured:$deps_configured,
+    deps_ok:$deps_ok,
+    deps_violations:($deps_viol | if . == "" then [] else split(",") end),
+    deps_warnings:($deps_warn | if . == "" then [] else split(",") end),
     auto_confirm:$auto_confirm,
     confirm_required:($auto_confirm | not),
     allowed_prefixes:($allowed | if . == "" then [] else split(":") end),
