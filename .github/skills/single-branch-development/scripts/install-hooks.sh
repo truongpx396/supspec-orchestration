@@ -217,6 +217,11 @@ export RUNS_DIR="\${RUNS_DIR:-$RUNS_DIR_NAME}"                        # [REPO-PO
 export PREFLIGHT_REQUIRE_GH="\${PREFLIGHT_REQUIRE_GH:-1}"            # [REPO-POLICY] require authenticated gh (0 to waive on setup runs).
 export PREFLIGHT_REQUIRE_TOOLCHAIN="\${PREFLIGHT_REQUIRE_TOOLCHAIN:-}" # [TASK-DERIVED] per-task bins on PATH (detected repo-wide: ${toolchain:-none}).
 
+# --- dependency version-lock (skill-deps.json) + probe cache [REPO-POLICY] ---
+export TRACK_DEPS_CACHE_TTL_HOURS="\${TRACK_DEPS_CACHE_TTL_HOURS:-72}" # cache the version probe this many hours (0 = always re-check).
+export TRACK_DEPS_STRICT="\${TRACK_DEPS_STRICT:-0}"                  # 1 = an out-of-range pinned version hard-fails preflight; 0 = warn.
+export TRACK_DEPS_MANIFEST="\${TRACK_DEPS_MANIFEST:-}"              # path to skill-deps.json; empty = auto (beside the hooks).
+
 # --- evidence gate (CATALOG seeded from detected stack — [REPO-POLICY]) -------
 export TRACK_EVIDENCE_KINDS="\${TRACK_EVIDENCE_KINDS:-${kinds}}"      # label:pattern pack.
 export TRACK_EVIDENCE_RULES="\${TRACK_EVIDENCE_RULES:-${rules}}"      # diff-path glob → required kind.
@@ -232,6 +237,36 @@ export TRACK_SENTINEL="\${TRACK_SENTINEL:-1}"                        # [REPO-POL
 # --- notify (optional) -------------------------------------------------------
 export TRACK_NOTIFY_WEBHOOK="\${TRACK_NOTIFY_WEBHOOK:-}"             # [REPO-POLICY] terminal-state webhook; empty = no notify.
 EOF
+}
+
+# render_skill_deps — emit the COMMITTED dependency version-lock manifest. Starts from the
+# template (git/jq + optional superpowers/speckit) and MERGES the detected repo toolchain
+# (go/uv/node/python) as required:false, empty-range entries — present for the probe CACHE
+# but not version-pinned by default, so seeding never introduces a surprise lock failure.
+# Edit the ranges to turn a detected tool into a hard pin. Never clobbers an existing file.
+render_skill_deps() {
+  local fields toolchain t probe add='{}' saved_ifs
+  fields="$(detect_base_env)"
+  toolchain="$(printf '%s' "$fields" | cut -f3)"
+  if [ -n "$toolchain" ]; then
+    saved_ifs="$IFS"; IFS=,
+    for t in $toolchain; do
+      [ -n "$t" ] || continue
+      case "$t" in
+        go)             probe="go version" ;;
+        uv)             probe="uv --version" ;;
+        node)           probe="node --version" ;;
+        python|python3) probe="python3 --version" ;;
+        *)              probe="$t --version" ;;
+      esac
+      add="$(printf '%s' "$add" | jq -c --arg n "$t" --arg p "$probe" \
+        '.[$n] = {range:"", probe:$p, required:false}')"
+    done
+    IFS="$saved_ifs"
+  fi
+  # Template deps win on any key conflict (they carry the real pins); detected toolchain
+  # keys (go/uv/node/python) never collide with the template's git/jq/superpowers/speckit.
+  jq --argjson add "$add" '.dependencies = ($add + .dependencies)' "$SRC_TEMPLATES/skill-deps.json"
 }
 
 # --- plan + execute ----------------------------------------------------------
@@ -295,18 +330,33 @@ else
 fi
 say ""
 
-# 4. Claude Code wiring (.claude/settings.json) — only when surface includes claude.
+# 4. seed dependency version-lock manifest (never clobber)
+deps_exists=0; [ -f "$HOOKS_DIR/skill-deps.json" ] && deps_exists=1
+if [ "$deps_exists" -eq 1 ]; then
+  say "4. Version-lock skill-deps.json: already present — left untouched (never clobbered)."
+else
+  say "4. Seed .github/hooks/skill-deps.json (version-lock manifest, from template + detected toolchain):"
+  say "     git/jq pinned; detected repo tools added required:false (probe-cached, edit a range to pin)."
+  if act; then
+    mkdir -p "$HOOKS_DIR"
+    render_skill_deps > "$HOOKS_DIR/skill-deps.json"
+    say "   ✓ seeded (review + commit it)"
+  fi
+fi
+say ""
+
+# 5. Claude Code wiring (.claude/settings.json) — only when surface includes claude.
 commit_paths=".github/hooks .gitignore"
 if surface_has claude; then
   commit_paths="$commit_paths .claude/settings.json"
   if claude_wired; then
-    say "4. Claude Code wiring (.claude/settings.json): already registers the track hooks — left as-is."
+    say "5. Claude Code wiring (.claude/settings.json): already registers the track hooks — left as-is."
   elif [ -f "$REPO_ROOT/.claude/settings.json" ]; then
-    say "4. Claude Code wiring: append our hooks block into existing .claude/settings.json"
+    say "5. Claude Code wiring: append our hooks block into existing .claude/settings.json"
     say "     (append-only + dedup'd — your other settings and hooks are preserved)."
     if act; then merge_claude_wiring; say "   ✓ merged (review + commit it)"; fi
   else
-    say "4. Claude Code wiring: create .claude/settings.json from the template."
+    say "5. Claude Code wiring: create .claude/settings.json from the template."
     if act; then merge_claude_wiring; say "   ✓ created (review + commit it)"; fi
   fi
   say ""

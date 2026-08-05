@@ -119,12 +119,15 @@ subagent vs ⚙️ script).
    **Derive task-shaped config before running the script** — the values whose correct setting depends
    on *this* task, not repo-wide policy: `TRACK_ALLOWED_PREFIXES` (+ any `TRACK_FROZEN_PATHS`),
    `PREFLIGHT_REQUIRE_TOOLCHAIN` (so a missing bin fails here, not mid-run), and
-   `TRACK_REQUIRED_EVIDENCE` (the evidence *floor*). Preflight echoes each with an unset flag —
-   `scope_set:false` means the guard fails closed and denies **all** edits; `evidence_floor_set:false`
-   means the gate is rules-only. Repo-wide catalog/policy (`TRACK_EVIDENCE_KINDS`/`RULES`, sentinel,
-   ceilings, `RUNS_DIR`) stays in the committed `track-env.base.sh` — never regenerate it per run.
-   Confirm the derived values in the same proceed-confirm, then `--persist` stamps them into the
-   breadcrumb as a faithful record of what was approved. Do not hand-widen scope mid-run.
+   `TRACK_REQUIRED_EVIDENCE` (the evidence *floor*). Preflight also checks the optional dependency
+   lock: if the repo has a committed `skill-deps.json` manifest beside the hooks, it probes each
+  declared tool and fails hard on a required lock violation (or warns on a non-strict out-of-range
+  version). The lock result is cached for `TRACK_DEPS_CACHE_TTL_HOURS` hours (default 72) in
+   `runs/.deps-cache.json` to avoid repeated `--version` probes. Repo-wide catalog/policy
+   (`TRACK_EVIDENCE_KINDS`/`RULES`, sentinel, ceilings, `RUNS_DIR`) stays in the committed
+   `track-env.base.sh` — never regenerate it per run. Confirm the derived values in the same
+   proceed-confirm, then `--persist` stamps them into the breadcrumb as a faithful record of what
+   was approved. Do not hand-widen scope mid-run.
 2. **Reconcile / resume** — run [`scripts/track-reconcile.sh`](scripts/track-reconcile.sh) to rebuild
    position from **persisted state only** (committed history + `runs/<run-id>.json`), never the
    model's reading of the worktree. It marks each evidence kind `fresh|stale|missing|failed` at the
