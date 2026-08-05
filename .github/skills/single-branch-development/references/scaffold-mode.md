@@ -133,6 +133,13 @@ fallback), security headers on public-facing proxies, strict type/lint settings,
 match the constitution. Governance discovered only at the review gate is a bug you paid a round-trip for
 — it is the exact failure mode that ships hardcoded `POSTGRES_PASSWORD` in a bootstrap PR.
 
+**Use the bundle's `## Cluster → binding sections` map to pick (a)–(d) per cluster.** Because a
+scaffold batch fans out to several clusters at once, the governance bundle should already carry that
+map (see [`governance.md`](governance.md) — "Pre-slice governance to the clusters that will consume
+it"), so each cluster's brief embeds exactly the sections its row names and nothing else. The map is
+the routing table; embed the *content* of the sections it points at, never the filename or the bare
+row.
+
 **The fan-out unit is an independent domain (a disjoint-file cluster) — NOT one-per-file, and NOT
 one-per-task.** This is the same rule `dispatching-parallel-agents` states: *one agent per independent
 problem domain*, not per file. Two facts force this:

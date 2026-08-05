@@ -94,38 +94,42 @@ This is why Step 0 of `executing-parallel-tracks` analyzes dependencies and grou
 ### Flow 1 — Scaffold (non-behavioral bootstrap)
 > **Skill:** `single-branch-development` in **scaffold mode**
 ```
-Step 1: track-preflight.sh --persist  🎫 mint RUN_ID, confirm scope
-Step 2: using-git-worktrees           🌿 isolate on a branch
-Step 3: dispatching-parallel-agents   🤖 parallel scaffold batches (no TDD)
-Step 4: requesting-code-review        🔎 self-review quality + governance
-Step 5: verification-before-completion 🚦 evidence gate (fingerprint match)
-Step 8: gh pr create --draft          📬 stop here — human reviews
+Step 1: track-preflight.sh --persist   🎫 mint RUN_ID, confirm scope
+Step 2: track-reconcile.sh             ♻️ recover durable state (no-op on a fresh run)
+Step 3: using-git-worktrees            🌿 isolate in a dedicated worktree
+Step 4: governance gate + mode guard   📜 distil instructions; guard refuses any behavioral task
+        dispatching-parallel-agents    🤖 parallel generators → controller applies (sole writer)
+        requesting-code-review         🔎 one whole-diff review (+ governance)
+Step 5-6: verification-before-completion 🚦 freeze & verify-all → evidence gate (one fingerprint)
+Step 8: track-audit.sh → gh pr --draft 📬 audit invariants, then stop — human reviews
 ```
 
 ### Flow 2 — Single feature/bugfix (story mode, TDD)
 > **Skill:** `single-branch-development` in **story mode** (N=1 for a single task/bugfix)
 ```
-Step 1: track-preflight.sh --persist  🎫 mint RUN_ID, confirm scope
-Step 2: using-git-worktrees           🌿 isolate on a branch
-Step 3: dispatching-parallel-agents   🤖 RED batch — write failing tests
-Step 4: requesting-code-review        🔎 freeze test API (maker/checker)
-Step 5: subagent-driven-development   🤖 GREEN — make tests pass
-Step 6: verification-before-completion 🚦 evidence gate (fingerprint match)
-Step 7: requesting-code-review        🔎 full self-review
-Step 8: gh pr create --draft          📬 stop here — human reviews
+Step 1: track-preflight.sh --persist   🎫 mint RUN_ID, confirm scope
+Step 2: track-reconcile.sh             ♻️ recover durable state (no-op on a fresh run)
+Step 3: using-git-worktrees            🌿 isolate in a dedicated worktree
+Step 4: governance gate + mode guard   📜 distil instructions (story = default for behavioral work)
+        dispatching-parallel-agents    🤖 author the RED batch — failing tests
+        requesting-code-review         🔎 review + freeze the test API (maker/checker)
+        subagent-driven-development    🤖 GREEN incrementally in dependency order
+Step 5-6: verification-before-completion 🚦 freeze & verify-all → evidence gate (one fingerprint)
+Step 8: track-audit.sh → gh pr --draft 📬 audit invariants, then stop — human reviews
 ```
 
 ### Flow 3 — Refactor (behavior-preserving, keep-green)
 > **Skill:** `single-branch-development` in **refactor mode**
 ```
-Step 1: track-preflight.sh --persist  🎫 mint RUN_ID, confirm scope
-Step 2: using-git-worktrees           🌿 isolate on a branch
-Step 3: dispatching-parallel-agents   🤖 pin-green (snapshot passing suite)
-Step 4: requesting-code-review        🔎 freeze baseline
-Step 5: subagent-driven-development   🤖 refactor; systematic-debugging on red
-Step 6: verification-before-completion 🚦 evidence gate
-Step 7: requesting-code-review        🔎 full self-review
-Step 8: gh pr create --draft          📬 stop here — human reviews
+Step 1: track-preflight.sh --persist   🎫 mint RUN_ID, confirm scope
+Step 2: track-reconcile.sh             ♻️ recover durable state (no-op on a fresh run)
+Step 3: using-git-worktrees            🌿 isolate in a dedicated worktree
+Step 4: governance gate + mode guard   📜 distil instructions; guard keeps work behavior-preserving
+        dispatching-parallel-agents    🤖 pin green + characterize thin coverage (must pass now)
+        requesting-code-review         🔎 review + freeze the baseline
+        subagent-driven-development    🤖 transform in small steps, keep green (red → route to story)
+Step 5-6: verification-before-completion 🚦 freeze & verify-all → evidence gate (one fingerprint)
+Step 8: track-audit.sh → gh pr --draft 📬 audit invariants, then stop — human reviews
 ```
 
 ### Flow 4 — Parallel tracks (N stories at once)
@@ -135,11 +139,12 @@ Step 0: Analyze & plan waves          📊 derive dependencies, wave plan, CONFI
 Step 1: track-wave-preflight.sh       🌊 mint WAVE_ID + per-track RUN_IDs, persist wave dispatch
         track-precheck.sh             🔎 validate manifest + ownership overlap
 Step 2: using-git-worktrees (×N)      🌿 one isolated worktree per track
-Step 3: dispatching-parallel-agents   🪢 fan out N worker agents
+Step 3: dispatching-parallel-agents   🪢 fan out N worker agents (each with AUTO_CONFIRM=1)
   Each agent runs single-branch-development  🔄 full pipeline per track
-Step N+1: observe run records         📊 triage by RUN_ID (wave prefix → all tracks visible)
-Step N+2: integration sequencing      🔀 PRs ordered by dependency
-Step 7:   track-wave-preflight.sh --complete  🏁 close wave dispatch (final_status)
+Step 4: track-report.sh → gh pr --draft 📬 per-track Auto block + draft PR
+Step 5: integration sequencing        🔀 CI + human / merge queue — PRs ordered by dependency
+Step 6: stale-PR bounce               ♻️ re-dispatch owning worker to rebase
+Step 7: track-wave-preflight.sh --complete  🏁 close wave dispatch (final_status)
        ↓
 human reviews N draft PRs → merge queue
 ```
@@ -160,8 +165,8 @@ A thin **per-branch bracket** (isolation before, evidence gate + draft-PR bounda
 | Mode | What it does | Key superpower used |
 |---|---|---|
 | **scaffold** | Non-behavioral bootstrap batches (config, wiring, structure) | 🤖 `dispatching-parallel-agents` → `requesting-code-review` |
-| **story** | Add or change behavior under phased TDD | 🤖 `dispatching-parallel-agents` (RED batch) → `requesting-code-review` (freeze) → 🤖 `subagent-driven-development` (GREEN) |
-| **refactor** | Behavior-preserving keep-green change | 🤖 `dispatching-parallel-agents` (pin-green) → `requesting-code-review` → 🤖 `subagent-driven-development` + `systematic-debugging` |
+| **story** | Add or change behavior under phased TDD | 🤖 `dispatching-parallel-agents` (RED batch) → `requesting-code-review` (freeze) → 🤖 `subagent-driven-development` (GREEN); a bugfix is N=1 prefixed with `systematic-debugging` (root-cause → encode as the RED test) |
+| **refactor** | Behavior-preserving keep-green change | 🤖 `dispatching-parallel-agents` (pin-green) → `requesting-code-review` → 🤖 `subagent-driven-development` (keep green; a red test routes to story) |
 
 All modes share: `using-git-worktrees` (isolation), `verification-before-completion` (evidence gate), `requesting-code-review` (self-review), and the full hooks bundle.
 
@@ -181,19 +186,23 @@ Superpowers used: `receiving-code-review` (triage) → 🤖 `dispatching-paralle
 
 ## 🧬 Anatomy of a skill
 
-Every top-level skill file (`SKILL.md`) follows a consistent section spine, so you always know where to look:
+Every top-level skill file (`SKILL.md`) follows a consistent section spine, so you always know where to look. These sections appear in **all three** skills:
 
 | Section | What it contains |
 |---|---|
-| `## When to Use` | Trigger phrases; when NOT to use |
+| `## When to Use This Skill` | Trigger phrases; when NOT to use |
 | `## Prerequisites` | Required tools, skills, artifacts |
-| `## Pipeline` | Numbered steps, exactly what happens in order |
-| `## Skill-Per-Step Map` | Table: step → what fires → kind (skill / subagent / script) |
-| `## Quality Gates` | What this skill owns — precheck, verifier, merge, evidence gates |
+| `## Run Ledger` *(EPT: `## Orchestrator ledger`)* | The compaction/crash-survival habits — a live TODO list, `track-note.sh phase` stamps, re-anchor after compaction |
+| `## Pipeline` | Numbered steps, exactly what happens in order (SBD: `One Branch`, EPT: `N Tracks`) |
+| `## Skill-Per-Step Map` | Table: step → what fires → kind (🧩 skill / 🤖 subagent / ⚙️ script) |
+| `## Quality Gates (Owned Here)` | Invariants this skill asserts — governance, TDD, maker/checker, evidence |
+| `## Hooks` | The mechanical bundle: which scripts fire, owned (SBD) vs reused (EPT/PRF) |
 | `## Gotchas` | Known footguns with mitigations |
 | `## References` | Links to deep-dive docs and related skills |
 
-Deep-dive docs (scaffold/story/refactor modes, hooks reference) live under `references/` inside each skill directory.
+Some sections are **skill-specific**: `## Terminal States` (SBD + EPT — the four states an orchestrator routes on; PRF has none), `## The Three Execution Cores` (SBD only — the scaffold/story/refactor guard + comparison), `## Composition Contract` (SBD only — what an orchestrator may tighten/waive), and EPT's `## Autonomy boundary`, `## Manifest contract`, and `## Maturity ladder`.
+
+Deep-dive docs (scaffold/story/refactor modes, hooks reference, governance) live under `references/` inside each skill directory.
 
 ---
 
@@ -242,7 +251,7 @@ Evidence is what separates "the agent claimed it worked" from "the agent proved 
 |---|---|---|
 | `go.mod` present *(auto)* | `go-test` | `go test -race ./...` |
 | `pyproject.toml` / `uv.lock` *(auto)* | `py` | `uv run pytest` |
-| `package.json` present *(auto)* | `ts` | `tsc --noEmit && npm test` |
+| `package.json` present *(auto)* | `ts` | `tsc --noEmit` |
 | `migrations/` directory *(auto)* | `pg-explain` | `psql -c 'EXPLAIN (ANALYZE, FORMAT JSON) …'` |
 | NATS producers/consumers *(add manually)* | `nats` | `nats consumer info <stream> <consumer>` |
 | Redis interactions *(add manually)* | `redis` | `redis-cli TTL <key>` |
@@ -496,6 +505,38 @@ README.md
 
 ## 🚀 Getting started
 
+### ⚡ One command (recommended)
+
+From the target repo (or point `--target` at it), run the root `install.sh` for one or both surfaces.
+It is **dry-run by default** — it prints a plan and touches nothing until you add `--apply`:
+
+```bash
+# clone this catalog somewhere, then from YOUR project's git root:
+/path/to/supspec-orchestration/install.sh --github-copilot --claude-code        # dry-run plan
+/path/to/supspec-orchestration/install.sh --github-copilot --claude-code --apply # execute
+```
+
+What `--apply` does, in the target repo:
+
+- copies the 3 orchestration skills → `.github/skills/` (Copilot) and/or `.claude/skills/` (Claude Code);
+- copies the governance `.github/instructions/*` and the `agent-pr-audit.yml` workflow (both surfaces);
+- for Claude Code, **fetches the dependency skills from GitHub at the versions pinned in `skill-deps.json`**
+  (`obra/superpowers` → `.claude/skills/`, `github/spec-kit` → `.claude/skills/speckit/`); pass `--no-deps`
+  to skip the network fetch;
+- delegates the hook bundle to `install-hooks.sh --surface <mapped>` (see below).
+
+Flags: `--github-copilot` / `--claude-code` (at least one; `--both` for both), `--apply`, `--no-deps`,
+`--target DIR` (default: the git repo containing the current directory), `-h`.
+
+> **Claude Code note:** Claude does not auto-inject `.github/instructions/*` by `applyTo` the way Copilot
+> does. That is a no-op for correctness — the skills read the matched instruction files **in-session** at
+> their governance gate — but keep `.github/instructions/` in place.
+
+The manual steps below cover the **essentials** — skills + hooks — if you prefer to run them yourself.
+The one-command flow additionally copies `.github/instructions/*` and the `agent-pr-audit.yml` workflow,
+and (for Claude Code) fetches the Superpowers/SpecKit dependency skills; do those by hand too if you go
+fully manual (see [Prerequisites](#-prerequisites) and [Runs on Copilot and Claude Code](#runs-on-copilot-and-claude-code)).
+
 ### 1️⃣ Copy skills into your repo
 Copy the skill directories into the target repo where **your agent discovers skills**:
 
@@ -584,6 +625,8 @@ Example value: `*.go:go-test;*.py:py;*.tsx:ts;*.ts:ts;migrations/*:pg-explain`
 | `TRACK_SENTINEL` | `1` | Scan staged diff for likely secrets/debug leftovers at Stop |
 | `TRACK_NOTIFY_WEBHOOK` | `""` | URL for best-effort completion webhook; empty = no notify |
 | `PREFLIGHT_REQUIRE_GH` | `1` | Require authenticated `gh` CLI at preflight (set `0` on bootstraps without a remote) |
+| `PREFLIGHT_REQUIRE_TOOLCHAIN` | `""` *(task-derived)* | Space-separated bins that must be on `PATH` at preflight (e.g. `go uv`); empty = skip the check |
+| `TRACK_SELF_HEAL_ATTEMPTS` | `2` | Retries per **distinct** failure before halting `blocked` (prompt-enforced; persisted so the number survives a context compaction) |
 | `TRACK_DEPS_CACHE_TTL_HOURS` | `72` | How long a passing `skill-deps.json` version-lock probe is cached in `runs/.deps-cache.json` before re-checking (`0` = always re-probe) |
 | `TRACK_DEPS_STRICT` | `0` | `1` = an out-of-range (non-required) tool version fails preflight instead of only warning |
 | `TRACK_DEPS_MANIFEST` | `""` | Path to the version-lock manifest; empty = auto-discover `skill-deps.json` beside the hooks |

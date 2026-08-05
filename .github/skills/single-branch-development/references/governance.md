@@ -95,10 +95,27 @@ Surface: backend-go/**, deploy/compose.yml
 - no default credentials committed; env placeholder + documented dev fallback
 
 ## Design (.stitch/designs/…, design-system/…) — ABSENT (no frontend surface)
+
+## Cluster → binding sections  (only when the core fans out to parallel makers)
+- go cluster (cmd/, kernel/, internal/, go.mod): Constitution I/II, code-review-generic, go
+- deploy cluster (compose.yml, Caddyfile, .env*): code-review-generic, devops-cicd, backing-services, security-and-owasp
 ```
 
 State **ABSENT** explicitly for every check that no-opped. An absent line is proof the check ran; a
 missing line is indistinguishable from a skipped check.
+
+### Pre-slice governance to the clusters that will consume it
+
+The per-file sections above are organized by *instruction file*, but a fan-out core
+(`dispatching-parallel-agents`) dispatches **one brief per disjoint-file cluster** — and each brief
+carries only the governance that binds *its* files, not the whole bundle. Whenever the core fans out
+to more than one parallel maker (scaffold `generate`, story RED-authoring, refactor pin-green),
+append a **`## Cluster → binding sections`** map so that slicing is done **once, in the bundle**,
+not re-derived per dispatch. Each row names a cluster (by its file surface) and lists exactly which
+sections above bind it — including `ABSENT`/design notes where they matter (a frontend cluster with
+no design artefact should say so). A single-brief core (a lone story task, N=1) does not need the
+map: there is only one consumer. See [`scaffold-mode.md`](scaffold-mode.md) GENERATE for the
+cluster-brief contract this feeds.
 
 ## Step 3 — Push it into every brief
 
@@ -106,6 +123,11 @@ Every subagent brief — `dispatching-parallel-agents` fan-out makers **and**
 `subagent-driven-development` per-task makers and reviewers — embeds the **bundle's content**, and
 says it is binding: the code it returns must *already* satisfy these (pinned image tags, no
 committed default credentials, secure headers, strict type/lint, parameterized queries).
+
+When the bundle carries a **`## Cluster → binding sections`** map, a fan-out brief embeds **only the
+sections that map names for its cluster** — the whole bundle re-pasted into every brief is context
+waste and buries the constraints that actually bite. The map is the routing table; the per-file
+sections are the content it points at. Embed content, never the filename or the bare row.
 
 Governance therefore gates **both ends** — the maker brief prevents the violation, the review
 catches what slipped through. That is deliberate defense-in-depth, not redundancy. Review is the
@@ -137,5 +159,6 @@ If the context was compacted (or the session crashed and resumed) at any point d
 - [ ] Design artefacts read for any frontend surface, or noted absent
 - [ ] `security-and-owasp.instructions.md` read for any trust-boundary surface
 - [ ] Constraints distilled and written to `runs/<RUN_ID>.governance.md`
+- [ ] `## Cluster → binding sections` map added when the core fans out to parallel makers
 - [ ] `track-note.sh governance <path>` called
 - [ ] Bundle content embedded in every maker and reviewer brief
