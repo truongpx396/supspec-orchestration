@@ -58,16 +58,16 @@ which increment you were on, your governance excerpts. Three habits make the run
    each naming the artifact that proves it done — it is re-serialized every turn, so it survives a
    compaction that eats the middle of this document:
    ```
-   - [ ] 1 Preflight & confirm      → runs/<RUN_ID>.dispatch persisted
-   - [ ] 2 Reconcile / resume       → reconcile JSON read; dirty tree stashed
-   - [ ] 3 Isolate                  → git worktree list shows > 1 entry
-   - [ ] 4 Governance gate          → runs/<RUN_ID>.governance.md written + pinned
-   - [ ] 4 Execution core (<mode>)  → per-mode steps from the mode reference
-   - [ ] 5 Freeze & verify-all      → all kinds captured at ONE fingerprint
-   - [ ] 6 Evidence gate            → real output pasted
-   - [ ] 7 Confirm run record       → runs/<RUN_ID>.json reviewed
-   - [ ] 8 Discipline audit         → track-audit.sh clean
-   - [ ] 8 Draft PR                 → gh pr create --draft printed a URL
+   - [ ] 1  Preflight & confirm      → runs/<RUN_ID>.dispatch persisted
+   - [ ] 2  Reconcile / resume       → reconcile JSON read; dirty tree stashed
+   - [ ] 3  Isolate                  → git worktree list shows > 1 entry
+   - [ ] 4a Governance gate          → runs/<RUN_ID>.governance.md written + pinned
+   - [ ] 4b Execution core (<mode>)  → per-mode steps from the mode reference
+   - [ ] 5  Freeze & verify-all      → all kinds captured at ONE fingerprint
+   - [ ] 6  Evidence gate            → real output pasted
+   - [ ] 7  Confirm run record       → runs/<RUN_ID>.json reviewed
+   - [ ] 8a Discipline audit         → track-audit.sh clean
+   - [ ] 8b Draft PR                 → gh pr create --draft printed a URL
    ```
 2. **Stamp every step boundary** with
    [`scripts/track-note.sh`](scripts/track-note.sh)` phase <mode> <step>`. **Mandatory**, not the
@@ -103,31 +103,28 @@ subagent vs ⚙️ script).
    `TRACK_ID` exists. No breadcrumb → **START**: mint `RUN_ID` = `<UTC-timestamp>_<track>`, check
    prerequisites, and on approval persist `runs/<RUN_ID>.dispatch`. Breadcrumb exists → **RESUME**
    that run automatically (there is no `--resume` flag). It prints a one-screen summary (Mode · Track
-   · Tasks · RUN_ID · Branch · Base ref · Prereqs) and the same as JSON. **Present that emitted summary
-   verbatim for approval — never re-type it into a hand-built table.** A re-rendered summary can drift
-   silently from what `--persist` actually stamps into the breadcrumb; the script's own output is the
-   single source of truth. **The interactive confirm is
-   mandatory: STOP and get explicit human approval of this summary before Step 3 creates anything.**
-   The only waiver is `--yes` (or `AUTO_CONFIRM=1`), and it exists for exactly one caller: a worker
-   **dispatched by an orchestrator**, which has no human to ask and whose human gate was already
-   taken upstream at the wave plan. Absent that flag treat confirm as required — never skippable by
-   default, and never self-granted because no human answered. The waiver is recorded
-   (`auto_confirm:true` / `confirmed_by:"orchestrator-waiver"` in both the JSON and the breadcrumb)
-   so an audit can tell an approved run from a waived one. It waives **only** the confirm: a
-   prerequisite failure still hard-fails under `--yes`. Re-run with `--persist` to persist. See
-   [references/hooks.md](references/hooks.md) for `RUN_ID` mechanics.
-   **Derive task-shaped config before running the script** — the values whose correct setting depends
-   on *this* task, not repo-wide policy: `TRACK_ALLOWED_PREFIXES` (+ any `TRACK_FROZEN_PATHS`),
-   `PREFLIGHT_REQUIRE_TOOLCHAIN` (so a missing bin fails here, not mid-run), and
-   `TRACK_REQUIRED_EVIDENCE` (the evidence *floor*). Preflight also checks the optional dependency
-   lock: if the repo has a committed `skill-deps.json` manifest beside the hooks, it probes each
-  declared tool and fails hard on a required lock violation (or warns on a non-strict out-of-range
-  version). The lock result is cached for `TRACK_DEPS_CACHE_TTL_HOURS` hours (default 72) in
-   `runs/.deps-cache.json` to avoid repeated `--version` probes. Repo-wide catalog/policy
-   (`TRACK_EVIDENCE_KINDS`/`RULES`, sentinel, ceilings, `RUNS_DIR`) stays in the committed
-   `track-env.base.sh` — never regenerate it per run. Confirm the derived values in the same
-   proceed-confirm, then `--persist` stamps them into the breadcrumb as a faithful record of what
-   was approved. Do not hand-widen scope mid-run.
+   · Tasks · RUN_ID · Branch · Base ref · Prereqs) and the same as JSON. Then, in order:
+   - **Confirm (mandatory).** Present the emitted summary **verbatim** for approval — never re-type it
+     into a hand-built table, which can drift silently from what `--persist` stamps into the breadcrumb
+     (the script's own output is the single source of truth). **STOP and get explicit human approval of
+     this summary before Step 3 creates anything**, then re-run with `--persist` to persist.
+   - **Waiver (orchestrator-dispatched worker only).** The one exception is `--yes` (or
+     `AUTO_CONFIRM=1`), for a worker **dispatched by an orchestrator** whose human gate was already
+     taken upstream at the wave plan — never self-granted just because no human answered. It is recorded
+     (`auto_confirm:true` / `confirmed_by:"orchestrator-waiver"` in both the JSON and the breadcrumb) so
+     an audit can tell an approved run from a waived one, and it waives **only** the confirm — a
+     prerequisite failure still hard-fails under `--yes`.
+   - **Derive task-shaped config first** — the values whose correct setting depends on *this* task, not
+     repo-wide policy: `TRACK_ALLOWED_PREFIXES` (+ any `TRACK_FROZEN_PATHS`),
+     `PREFLIGHT_REQUIRE_TOOLCHAIN` (so a missing bin fails here, not mid-run), and
+     `TRACK_REQUIRED_EVIDENCE` (the evidence *floor*). Confirm them in the same proceed-confirm;
+     `--persist` stamps them into the breadcrumb as a faithful record of what was approved. **Never
+     hand-widen scope mid-run.** Repo-wide catalog/policy (`TRACK_EVIDENCE_KINDS`/`RULES`, sentinel,
+     ceilings, `RUNS_DIR`) stays in the committed `track-env.base.sh` — never regenerate it per run.
+     Preflight also checks the optional dependency lock: a committed `skill-deps.json` beside the hooks
+     makes it probe each declared tool and fail hard on a required lock violation (warn on a non-strict
+     out-of-range version), the result cached `TRACK_DEPS_CACHE_TTL_HOURS` hours (default 72) in
+     `runs/.deps-cache.json`. See [references/hooks.md](references/hooks.md) for `RUN_ID` mechanics.
 2. **Reconcile / resume** — run [`scripts/track-reconcile.sh`](scripts/track-reconcile.sh) to rebuild
    position from **persisted state only** (committed history + `runs/<run-id>.json`), never the
    model's reading of the worktree. It marks each evidence kind `fresh|stale|missing|failed` at the
