@@ -8,6 +8,19 @@ contracts are still stabilizing — matching the convention used by
 Each skill's `SKILL.md` frontmatter carries its own `version` field; this file tracks the
 whole-repo release that ships them together.
 
+## [0.2.0] - 2026-08-06
+
+Installer version selection: `install.sh` can now install a specific release, defaulting to latest.
+
+- **`install.sh`** — new `--ref <tag>` flag pins an exact release, and installs the **latest published
+  release by default** (resolves the newest `vX.Y.Z` tag from the catalog remote, clones the catalog at
+  that tag, and re-executes *that tag's own* `install.sh` so the installer logic always matches the
+  version it installs — no bootstrap skew). New `--local` / `--no-fetch` installs the current checkout
+  as-is; running from inside the catalog repo is always treated as `--local`. Offline or unresolved-tag
+  cases fall back to the local checkout with a warning. The resolved version is shown on the plan
+  header's `version:` line. Mirrors SpecKit's default-latest-with-`@vX.Y.Z`-pin model. No skill
+  behavior changed.
+
 ## [0.1.1] - 2026-08-06
 
 Hotfix: keep `SKILL.md` bodies within the 500-line hard maximum enforced by CI.
@@ -32,5 +45,6 @@ Initial tagged release. Three composable skills plus their shared mechanical-hoo
   `scripts/install-hooks.sh` for both Copilot and Claude Code surfaces.
 - One-command repo bootstrap via `install.sh`.
 
+[0.2.0]: https://github.com/truongpx396/supspec-orchestration/releases/tag/v0.2.0
 [0.1.1]: https://github.com/truongpx396/supspec-orchestration/releases/tag/v0.1.1
 [0.1.0]: https://github.com/truongpx396/supspec-orchestration/releases/tag/v0.1.0

@@ -512,9 +512,19 @@ It is **dry-run by default** — it prints a plan and touches nothing until you 
 
 ```bash
 # clone this catalog somewhere, then from YOUR project's git root:
-/path/to/supspec-orchestration/install.sh --github-copilot --claude-code        # dry-run plan
-/path/to/supspec-orchestration/install.sh --github-copilot --claude-code --apply # execute
+/path/to/supspec-orchestration/install.sh --github-copilot --claude-code        # dry-run plan (latest release)
+/path/to/supspec-orchestration/install.sh --github-copilot --claude-code --apply # execute (latest release)
+/path/to/supspec-orchestration/install.sh --both --apply --ref v0.1.1            # pin an exact release
+/path/to/supspec-orchestration/install.sh --both --apply --local                 # install this checkout, no fetch
 ```
+
+**Version selection.** By default the installer installs the **latest published release**: it resolves the
+newest `vX.Y.Z` tag from the catalog remote, clones the catalog at that tag, and re-executes *that tag's own*
+`install.sh` — so the installer logic always matches the version it installs (no bootstrap skew). Use
+`--ref <tag>` to pin an exact release, or `--local` (alias `--no-fetch`) to install the checkout you cloned
+as-is. Running the script from inside the catalog repo itself is always treated as `--local`, and if the
+latest tag can't be resolved (offline, or no releases) it falls back to the local checkout with a warning.
+The resolved version is printed on the `version:` line of the plan header.
 
 What `--apply` does, in the target repo:
 
@@ -525,8 +535,9 @@ What `--apply` does, in the target repo:
   to skip the network fetch;
 - delegates the hook bundle to `install-hooks.sh --surface <mapped>` (see below).
 
-Flags: `--github-copilot` / `--claude-code` (at least one; `--both` for both), `--apply`, `--no-deps`,
-`--target DIR` (default: the git repo containing the current directory), `-h`.
+Flags: `--github-copilot` / `--claude-code` (at least one; `--both` for both), `--apply`, `--ref TAG`
+(default: latest release), `--local` / `--no-fetch`, `--no-deps`, `--target DIR` (default: the git repo
+containing the current directory), `-h`.
 
 > **Claude Code note:** Claude does not auto-inject `.github/instructions/*` by `applyTo` the way Copilot
 > does. That is a no-op for correctness — the skills read the matched instruction files **in-session** at

@@ -26,11 +26,20 @@
 # DRY-RUN BY DEFAULT: it prints a plan and touches nothing. Pass --apply to execute. This mirrors
 # install-hooks.sh's consent-gated convention.
 #
+# VERSION SELECTION — by DEFAULT this installs the LATEST published release. It resolves the newest
+# vX.Y.Z tag from the catalog remote, clones the catalog at that tag, and re-executes THAT tag's own
+# install.sh (so the installer logic always matches the version it installs — no bootstrap skew).
+# Pass --ref <tag> to pin an exact release, or --local to skip fetching and install this checkout as-is
+# (offline / development). Running the script from inside the catalog repo itself is always treated as
+# --local. If the latest tag cannot be resolved (offline, no releases), it falls back to this checkout.
+#
 # Usage:
-#   ./install.sh --github-copilot                 # dry-run plan: Copilot surface
-#   ./install.sh --claude-code                    # dry-run plan: Claude Code surface
+#   ./install.sh --github-copilot                 # dry-run plan: Copilot surface (latest release)
+#   ./install.sh --claude-code                    # dry-run plan: Claude Code surface (latest release)
 #   ./install.sh --github-copilot --claude-code   # dry-run plan: both surfaces
-#   ./install.sh --claude-code --apply            # execute
+#   ./install.sh --claude-code --apply            # execute (latest release)
+#   ./install.sh --both --apply --ref v0.1.1      # execute, pinned to an exact release tag
+#   ./install.sh --both --apply --local           # execute from this checkout, no GitHub fetch
 #   ./install.sh --claude-code --apply --no-deps  # execute, skip the GitHub dep-skill fetch
 #   ./install.sh --both --apply --target ../my-project   # install into an explicit destination
 #
@@ -39,6 +48,8 @@
 #   --claude-code    | --claude      install the Claude Code surface
 #   --both                           shorthand for both surfaces
 #   --apply                          execute the plan (default is dry-run)
+#   --ref TAG                        install this exact release tag (default: latest release)
+#   --local | --no-fetch             install this checkout as-is; do not fetch a release from GitHub
 #   --no-deps                        skip fetching superpowers/speckit from GitHub (Claude only)
 #   --target DIR                     destination repo (default: the git repo containing $PWD)
 #   -h | --help                      print this header
@@ -58,16 +69,24 @@ mode="dry-run"
 fetch_deps=1
 target_override=""
 expect_target=0
+ref_override=""
+expect_ref=0
+use_local=0
+passthru=()   # args forwarded verbatim on a version re-exec (excludes --ref/--local)
 for arg in "$@"; do
-  if [ "$expect_target" -eq 1 ]; then target_override="$arg"; expect_target=0; continue; fi
+  if [ "$expect_target" -eq 1 ]; then target_override="$arg"; expect_target=0; passthru+=(--target "$arg"); continue; fi
+  if [ "$expect_ref" -eq 1 ]; then ref_override="$arg"; expect_ref=0; continue; fi
   case "$arg" in
-    --github-copilot|--copilot) want_copilot=1 ;;
-    --claude-code|--claude)     want_claude=1 ;;
-    --both)                     want_copilot=1; want_claude=1 ;;
-    --apply)                    mode="apply" ;;
-    --no-deps)                  fetch_deps=0 ;;
+    --github-copilot|--copilot) want_copilot=1; passthru+=("$arg") ;;
+    --claude-code|--claude)     want_claude=1; passthru+=("$arg") ;;
+    --both)                     want_copilot=1; want_claude=1; passthru+=("$arg") ;;
+    --apply)                    mode="apply"; passthru+=("$arg") ;;
+    --no-deps)                  fetch_deps=0; passthru+=("$arg") ;;
     --target)                   expect_target=1 ;;
-    --target=*)                 target_override="${arg#--target=}" ;;
+    --target=*)                 target_override="${arg#--target=}"; passthru+=("$arg") ;;
+    --ref)                      expect_ref=1 ;;
+    --ref=*)                    ref_override="${arg#--ref=}" ;;
+    --local|--no-fetch)         use_local=1 ;;
     -h|--help)                  grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) printf 'install: unknown arg: %s\n' "$arg" >&2; exit 2 ;;
   esac
@@ -95,13 +114,66 @@ TGT_REAL="$(cd "$TARGET" && pwd -P)"
 self_install=0
 [ "$SRC_REAL" = "$TGT_REAL" ] && self_install=1
 
+say() { printf '%s\n' "$1"; }   # defined early so version selection can report
+
+# ── version selection (default = latest release; --ref pins; --local forces checkout) ──
+# Resolves the requested catalog version, clones it, and re-execs ITS OWN install.sh so the
+# installer always matches the version being installed. Guarded against loops, self-install,
+# and offline/failed fetches (loud fallback to the local checkout).
+CATALOG_URL="${SUPSPEC_CATALOG_URL:-$(git -C "$SRC" remote get-url origin 2>/dev/null || true)}"
+[ -n "$CATALOG_URL" ] || CATALOG_URL="https://github.com/truongpx396/supspec-orchestration.git"
+current_version() { git -C "$SRC" describe --tags --always 2>/dev/null || echo unknown; }
+latest_release_tag() {
+  git ls-remote --tags --refs "$CATALOG_URL" 2>/dev/null \
+    | awk -F/ '{print $NF}' \
+    | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+    | sort -V | tail -1 || true
+}
+
+install_version="$(current_version)"
+if [ -n "${SUPSPEC_INSTALL_REEXECED:-}" ]; then
+  install_version="$(current_version) (fetched release)"
+elif [ "$use_local" -eq 1 ]; then
+  install_version="$install_version (local checkout, --local)"
+elif [ "$self_install" -eq 1 ]; then
+  install_version="$install_version (local checkout; self-install)"
+else
+  want_ref="$ref_override"
+  if [ -z "$want_ref" ] || [ "$want_ref" = latest ]; then
+    want_ref="$(latest_release_tag)"
+    if [ -z "$want_ref" ]; then
+      say "install: could not resolve the latest release tag from $CATALOG_URL"
+      say "         (offline, or no releases?) — falling back to this checkout ($(current_version))."
+      say ""
+      install_version="$(current_version) (local fallback)"
+    fi
+  fi
+  if [ -n "$want_ref" ]; then
+    if [ "$want_ref" = "$(current_version)" ]; then
+      install_version="$want_ref (this checkout already matches)"
+    else
+      say "supspec-orchestration install: fetching $want_ref (this checkout: $(current_version))"
+      reexec_tmp="$(mktemp -d)"
+      if git clone --depth 1 --branch "$want_ref" "$CATALOG_URL" "$reexec_tmp/catalog" >/dev/null 2>&1; then
+        say "  → re-executing $want_ref's own installer for a skew-free install"
+        say ""
+        export SUPSPEC_INSTALL_REEXECED=1
+        exec bash "$reexec_tmp/catalog/install.sh" "${passthru[@]}"
+      fi
+      rm -rf "$reexec_tmp"
+      say "install: could not fetch $want_ref from $CATALOG_URL — falling back to this checkout ($(current_version))."
+      say ""
+      install_version="$(current_version) (local fallback)"
+    fi
+  fi
+fi
+
 surface_label() {
   if [ "$want_copilot" -eq 1 ] && [ "$want_claude" -eq 1 ]; then printf 'github-copilot + claude-code'
   elif [ "$want_copilot" -eq 1 ]; then printf 'github-copilot'
   else printf 'claude-code'; fi
 }
 
-say()  { printf '%s\n' "$1"; }
 act()  { [ "$mode" = "apply" ]; }
 # same_tree SRC DST — true when both exist and point at the same inode (never copy onto self)
 same_tree() { [ -e "$1" ] && [ -e "$2" ] && [ "$1" -ef "$2" ]; }
@@ -123,6 +195,7 @@ copy_file() {
 # ── header ───────────────────────────────────────────────────────────────────
 say "supspec-orchestration install: $(printf '%s' "$mode" | tr '[:lower:]' '[:upper:]')"
 say "  surface:  $(surface_label)"
+say "  version:  $install_version"
 say "  source:   $SRC_REAL"
 say "  target:   $TGT_REAL"
 [ "$self_install" -eq 1 ] && say "  note:     source == target (self-install; identical copies are skipped)"
