@@ -12,6 +12,6 @@
     "git": { "range": ">=2.30", "probe": "git --version", "required": true },
     "jq": { "range": ">=1.6", "probe": "jq --version", "required": true },
     "superpowers": { "range": "=6.2.0", "probe": "superpowers --version", "required": false },
-    "speckit": { "range": "=0.15.2", "probe": "speckit --version", "required": false }
+    "speckit": { "range": "=0.16.0", "probe": "specify --version", "required": false }
   }
 }

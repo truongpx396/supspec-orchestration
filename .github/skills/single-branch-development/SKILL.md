@@ -1,6 +1,6 @@
 ---
 name: single-branch-development
-version: 0.2.0
+version: 0.2.1
 description: 'Run a full end-to-end implementation pipeline on one branch/worktree in one of three execution cores — scaffold (non-behavioral bootstrap batch), story (TDD for new/changed behavior), or refactor (behavior-preserving keep-green) — with two-stage spec-compliance + code-quality verification, evidence capture, optional Copilot hooks, and draft-PR handoff. Use when asked to implement one feature, fix one bug, refactor existing code, or do foundation/scaffold setup with strong quality gates but without multi-track parallel orchestration.'
 ---
 
@@ -227,6 +227,8 @@ subagent vs ⚙️ script).
    absence — a reporter cannot report on its own absence. The label is **not** what makes the gate
    fire: `agent-pr-audit.yml` also detects the harness-written `Co-Authored-By` trailer on your
    commits, so omitting the label does not opt you out. It only makes the scope explicit.
+   **Keep the template's footer** (`🌱 Powered by Supspec Orchestration 🤖`) as the last line of the
+   body — it is the one fixed section that is not part of the "delete what doesn't apply" menu.
    **Never open a draft PR with an unaddressed ⚠️.** Once the PR is open, run `track-preflight.sh --complete` to stamp
    `completed_utc` + `duration_secs` (now − `created_utc`) onto the breadcrumb — write-once, the one
    deliberate boundary that knows the run's total wall-clock (a per-event hook never sees PR handoff).

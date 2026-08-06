@@ -8,9 +8,16 @@
 # which this script calls so there is exactly one source of truth for the hooks/env/deps wiring.
 #
 # WHAT LANDS WHERE (in the TARGET repo):
-#   .github/skills/*            the 3 orchestration skills          (Copilot discovery surface)
 #   .claude/skills/*            the 3 orchestration skills + fetched dependency skills
-#                               (superpowers, speckit)              (Claude Code discovery surface)
+#                               (superpowers, speckit)              (Claude Code surface; ALSO the
+#                                                                     Copilot surface when --both is
+#                                                                     requested — Copilot discovers
+#                                                                     .claude/skills/ too, so a --both
+#                                                                     install writes ONE copy here
+#                                                                     rather than duplicating into
+#                                                                     .github/skills/)
+#   .github/skills/*            the 3 orchestration skills + speckit (Copilot-ONLY installs — i.e.
+#                                                                     --github-copilot without --claude-code)
 #   .github/instructions/*      governance instruction files        (both surfaces — see note below)
 #   .github/workflows/agent-pr-audit.yml   agent-PR audit CI        (both surfaces)
 #   .github/hooks/*             track-*.sh bundle + track-env.base.sh + skill-deps.json (via install-hooks.sh)
@@ -22,9 +29,9 @@
 # gate (references/governance.md, Step 4) mandates reading the matched instruction files IN-SESSION
 # on either surface. The files still live under .github/instructions/ for both; nothing extra to wire.
 #
-# SAFETY MODEL — writes into shared repo config AND (for Claude) fetches from GitHub, so it is
-# DRY-RUN BY DEFAULT: it prints a plan and touches nothing. Pass --apply to execute. This mirrors
-# install-hooks.sh's consent-gated convention.
+# SAFETY MODEL — writes into shared repo config AND fetches from GitHub/PyPI for whichever
+# surface(s) are selected, so it is DRY-RUN BY DEFAULT: it prints a plan and touches nothing.
+# Pass --apply to execute. This mirrors install-hooks.sh's consent-gated convention.
 #
 # VERSION SELECTION — by DEFAULT this installs the LATEST published release. It resolves the newest
 # vX.Y.Z tag from the catalog remote, clones the catalog at that tag, and re-executes THAT tag's own
@@ -50,11 +57,14 @@
 #   --apply                          execute the plan (default is dry-run)
 #   --ref TAG                        install this exact release tag (default: latest release)
 #   --local | --no-fetch             install this checkout as-is; do not fetch a release from GitHub
-#   --no-deps                        skip fetching superpowers/speckit from GitHub (Claude only)
+#   --no-deps                        skip fetching the superpowers/speckit dependency skills
 #   --target DIR                     destination repo (default: the git repo containing $PWD)
 #   -h | --help                      print this header
 #
-# Requires: bash, git, jq. (git is also used to fetch dependency skills at their pinned tags.)
+# Requires: bash, git, jq. git also fetches superpowers at its pinned tag. speckit is installed
+# via its own `specify` CLI, run ephemerally through `uvx` (https://docs.astral.sh/uv/) pinned to
+# the version in skill-deps.json — no persistent `specify` install needed. Without uvx on PATH,
+# the speckit skill fetch is skipped with instructions to install it manually.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -206,19 +216,28 @@ SKILL_DIRS=()
 while IFS= read -r d; do SKILL_DIRS+=("$d"); done < <(find "$skills_src" -maxdepth 1 -mindepth 1 -type d | sort)
 
 # ── 1. orchestration skills ──────────────────────────────────────────────────
-if [ "$want_copilot" -eq 1 ]; then
-  say "1a. Orchestration skills → .github/skills/ (Copilot discovery):"
-  for d in "${SKILL_DIRS[@]}"; do
-    say "     $(basename "$d")"
-    copy_dir "$d" "$TARGET/.github/skills/$(basename "$d")"
-  done
-  say ""
-fi
+# GitHub Copilot (Dec 2025+) discovers project skills from .claude/skills/ as well as
+# .github/skills/. So when BOTH surfaces are requested we write ONE copy — under
+# .claude/skills/, the path Claude Code requires — instead of duplicating into
+# .github/skills/ too: one source of truth, no drift between two copies. A Copilot-only
+# install (no --claude-code) still uses .github/skills/, its own surface-specific path,
+# so it does not depend on that cross-directory discovery being available/enabled.
 if [ "$want_claude" -eq 1 ]; then
-  say "1b. Orchestration skills → .claude/skills/ (Claude Code discovery):"
+  if [ "$want_copilot" -eq 1 ]; then
+    say "1. Orchestration skills → .claude/skills/ (Claude Code + Copilot discovery):"
+  else
+    say "1. Orchestration skills → .claude/skills/ (Claude Code discovery):"
+  fi
   for d in "${SKILL_DIRS[@]}"; do
     say "     $(basename "$d")"
     copy_dir "$d" "$TARGET/.claude/skills/$(basename "$d")"
+  done
+  say ""
+elif [ "$want_copilot" -eq 1 ]; then
+  say "1. Orchestration skills → .github/skills/ (Copilot discovery):"
+  for d in "${SKILL_DIRS[@]}"; do
+    say "     $(basename "$d")"
+    copy_dir "$d" "$TARGET/.github/skills/$(basename "$d")"
   done
   say ""
 fi
@@ -238,9 +257,15 @@ say "3. CI workflow → .github/workflows/agent-pr-audit.yml:"
 copy_file "$SRC/.github/workflows/agent-pr-audit.yml" "$TARGET/.github/workflows/agent-pr-audit.yml"
 say ""
 
-# ── 4. dependency skills (Claude surface only) ───────────────────────────────
-# superpowers + speckit are NOT vendored here — fetch each from GitHub at the version pinned in
-# skill-deps.json. Best-effort + loud: tag-format fallbacks, default-branch fallback with a warning.
+# ── 4. dependency skills ──────────────────────────────────────────────────────
+# superpowers is a Claude Code skills/plugin catalog — vendored narrowly (its own skills/
+# subtree only) for the Claude surface, at the version pinned in skill-deps.json.
+#
+# speckit is NOT vendored (no git clone of github/spec-kit): it is installed via its OWN
+# `specify` CLI (`specify integration install <key>`), which scaffolds the narrow
+# speckit-*/SKILL.md bundle + shared .specify/ infra itself — the purpose-built mechanism
+# spec-kit ships for exactly this, instead of a ~500-file/16MB raw checkout with no SKILL.md
+# of its own. See fetch_speckit_skills below. Best-effort + loud throughout.
 dep_version() { jq -r --arg k "$1" '.dependencies[$k].range // ""' "$DEPS_MANIFEST" | sed 's/[^0-9.]//g'; }
 
 fetch_dep() {
@@ -248,7 +273,7 @@ fetch_dep() {
   #   SUBPATH = subtree inside the clone to copy ("" = whole repo). DEST = target dir name.
   local name="$1" url="$2" subpath="$3" dest="$4" ver tmp got_tag=""
   ver="$(dep_version "$name")"
-  say "4. Dependency skill '$name' (pinned $ver) → .claude/skills/$dest:"
+  say "4a. Dependency skill '$name' (pinned $ver) → .claude/skills/$dest:"
   if [ -z "$ver" ]; then say "     no version pinned in skill-deps.json — skipping."; return 0; fi
   if ! act; then say "     would clone $url @ v$ver (or $ver), copy ${subpath:-<repo root>}"; say ""; return 0; fi
   tmp="$(mktemp -d)"
@@ -278,15 +303,67 @@ fetch_dep() {
   say ""
 }
 
-if [ "$want_claude" -eq 1 ] && [ "$fetch_deps" -eq 1 ]; then
-  # superpowers ships its skills under skills/ ; speckit has no skills/ tree, vendor the checkout.
-  fetch_dep superpowers https://github.com/obra/superpowers.git skills superpowers
-  fetch_dep speckit     https://github.com/github/spec-kit.git   ""     speckit
-elif [ "$want_claude" -eq 1 ]; then
+fetch_speckit_skills() {
+  # Installs the speckit-* skills by shelling out to the `specify` CLI itself, pinned to
+  # the version in skill-deps.json via `uvx --from specify-cli==<ver>` (astral-sh/uv) — an
+  # ephemeral run, no persistent `specify` install left behind. Targets whichever surface(s)
+  # were selected, applying the same single-copy rule as step 1: when both --claude-code and
+  # --github-copilot are requested, install only the `claude` integration (→ .claude/skills/,
+  # which Copilot also discovers) rather than duplicating a second `copilot` integration into
+  # .github/skills/. A Copilot-only install uses the `copilot` integration directly, in
+  # explicit --skills mode (its default has changed across spec-kit releases; pin it).
+  local ver key label opts=()
+  ver="$(dep_version speckit)"
+  say "4b. Dependency skill 'speckit' (pinned $ver) via the specify CLI:"
+  if [ -z "$ver" ]; then say "     no version pinned in skill-deps.json — skipping."; say ""; return 0; fi
+  if [ "$want_claude" -eq 1 ]; then
+    key=claude; label=".claude/skills/speckit-*"
+  else
+    key=copilot; opts=(--integration-options="--skills"); label=".github/skills/speckit-*"
+  fi
+  if ! command -v uvx >/dev/null 2>&1; then
+    say "     ⚠ 'uvx' (astral-sh/uv — https://docs.astral.sh/uv/) not found on PATH — cannot run a"
+    say "       pinned specify CLI. Install uv, or install specify-cli yourself, then run:"
+    say "         specify integration install $key${opts:+ --integration-options=\"--skills\"}"
+    say ""
+    return 0
+  fi
+  if ! act; then
+    say "     would run: specify integration install $key${opts:+ --integration-options=\"--skills\"} → $label"
+    [ "$want_claude" -eq 1 ] && [ "$want_copilot" -eq 1 ] && \
+      say "     (skip a separate copilot install: Copilot also discovers .claude/skills/)"
+    say ""
+    return 0
+  fi
+  if [ ! -d "$TARGET/.specify" ]; then
+    say "     ⚠ $TARGET has no .specify/ — not an initialized Spec Kit project (see Prerequisites)."
+    say "       Run 'specify init --here' in the target repo yourself first, then re-run this installer."
+    say ""
+    return 0
+  fi
+  local out status
+  out="$(cd "$TARGET" && uvx --from "specify-cli==$ver" specify integration install "$key" --script sh --force "${opts[@]+"${opts[@]}"}" 2>&1)"; status=$?
+  if [ "$status" -ne 0 ]; then
+    say "     ✗ specify integration install $key failed:"
+    say "$out" | sed 's/^/       /'
+    say ""
+    return 0
+  fi
+  say "     ✓ installed speckit skills for '$key' → $label"
+  [ "$want_claude" -eq 1 ] && [ "$want_copilot" -eq 1 ] && \
+    say "     (skipped a separate copilot install: Copilot also discovers .claude/skills/)"
+  say ""
+}
+
+if [ "$fetch_deps" -eq 1 ]; then
+  [ "$want_claude" -eq 1 ] && fetch_dep superpowers https://github.com/obra/superpowers.git skills superpowers
+  { [ "$want_claude" -eq 1 ] || [ "$want_copilot" -eq 1 ]; } && fetch_speckit_skills
+elif [ "$want_claude" -eq 1 ] || [ "$want_copilot" -eq 1 ]; then
   say "4. Dependency skills: --no-deps set — skipping superpowers/speckit fetch."
-  say "     Ensure they are installed some other way (plugin / manual clone) so the referenced"
-  say "     skills resolve: subagent-driven-development, dispatching-parallel-agents, requesting-code-review,"
-  say "     using-git-worktrees, verification-before-completion, test-driven-development, systematic-debugging."
+  say "     Ensure they are installed some other way (plugin / manual clone / 'specify integration"
+  say "     install') so the referenced skills resolve: subagent-driven-development,"
+  say "     dispatching-parallel-agents, requesting-code-review, using-git-worktrees,"
+  say "     verification-before-completion, test-driven-development, systematic-debugging, speckit-*."
   say ""
 fi
 

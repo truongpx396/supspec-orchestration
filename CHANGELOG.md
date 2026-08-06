@@ -8,6 +8,42 @@ contracts are still stabilizing — matching the convention used by
 Each skill's `SKILL.md` frontmatter carries its own `version` field; this file tracks the
 whole-repo release that ships them together.
 
+## [0.4.0] - 2026-08-07
+
+Installer cleanup: `speckit` was vendored as a full repo clone, and a dual-surface install wrote the
+orchestration skills twice. Both were installer defects reported from a real consuming-repo install,
+not the skills' own pipeline logic.
+
+- **`install.sh`**:
+  - **`speckit` is installed via its own `specify` CLI, not a `git clone` of the whole repo.**
+    `fetch_dep` used to clone all of `github/spec-kit` (562 files, ~16MB — docs, tests, CI workflows,
+    media, `pyproject.toml`) into `.claude/skills/speckit/`, which had no root `SKILL.md` of its own
+    and was never actually discoverable as a skill. Now runs `specify integration install claude` or
+    `copilot`, pinned and run ephemerally via `uvx --from specify-cli==<ver>` (no persistent `specify`
+    install left behind) — producing the ~9 narrow `speckit-*/SKILL.md` bundles spec-kit ships for
+    exactly this, plus its `.specify/` shared infra (~130KB total, vs. the old 16MB). Requires the
+    target repo to already be an initialized Spec Kit project (see Prerequisites); falls back with an
+    actionable warning if `uvx` or `.specify/` is missing. `--no-deps` still skips the fetch entirely.
+  - **A `--both` install now writes the 3 orchestration skills once, not twice.** GitHub Copilot
+    (Dec 2025+) discovers project skills from `.claude/skills/` as well as `.github/skills/`, so
+    duplicating into both on every dual-surface install was pure drift risk — edit one copy, forget
+    the other. `--both` now writes a single copy under `.claude/skills/`; a Copilot-only install
+    (no `--claude-code`) still uses `.github/skills/` on its own, unaffected.
+  - `skill-deps.json`'s `speckit` probe checked `speckit --version`, a binary that has never existed
+    (the CLI is `specify`) — it silently reported "missing" every run, masked only because the
+    dependency is `required:false`. Fixed to `specify --version`; the pinned version bumped
+    `0.15.2` → `0.16.0` (current release).
+
+- **`single-branch-development`** (0.2.0 → 0.2.1): every PR body now ends with a fixed
+  `🌱 Powered by Supspec Orchestration 🤖` footer linking the catalog repo — the one section in
+  `templates/pr-body.md` exempted from "delete what doesn't apply."
+
+- **CI** — `agent-pr-audit.yml`'s meta-work exemption now also covers `install.sh`. Same
+  unsatisfiable-rule shape the CHANGELOG.md exemption fixed in v0.3.0: `install.sh` is this repo's
+  own installer, not product code, and this release's own PR (agent-authored, no run record) is what
+  hit the gap. The waiver still fires only when every changed file is tooling, still waives presence
+  and never integrity, and a release PR touching the gates still gets the `GATE_PATHS_RE` warning.
+
 ## [0.3.0] - 2026-08-06
 
 Evidence-integrity release. A real scaffold run produced a green PR whose required-evidence pack had
