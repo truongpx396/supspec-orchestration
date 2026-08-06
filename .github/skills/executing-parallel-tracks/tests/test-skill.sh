@@ -119,11 +119,20 @@ detect_overlap() {
 # contains "run_id". Selecting by content (not "first block") keeps this robust when
 # other json blocks (e.g. the wave-dispatch example) appear before it in the doc.
 # Strip JS-style inline comments so jq can parse it.
+#
+# The skill's documented contract spans SKILL.md PLUS its references/ files
+# (progressive disclosure — the repo standard splits detail into references/ at
+# ~200 lines, 500 hard max). Concatenate them so a section relocated into
+# references/ (e.g. the run-record / wave-dispatch schemas) still satisfies the
+# content-fence assertions below.
+SKILL_DOC="$TMPDIR_ROOT/skill-doc.md"
+cat "$SKILL" "$SKILL_DIR"/references/*.md > "$SKILL_DOC" 2>/dev/null || cat "$SKILL" > "$SKILL_DOC"
+
 RUN_RECORD_JSON="$(awk '
   /^```json/ { flag=1; buf=""; next }
   /^```/     { if (flag) { if (buf ~ /"run_id"/) { printf "%s", buf; exit } flag=0 } next }
   flag       { buf = buf $0 "\n" }
-' "$SKILL" | sed 's|//.*||')"
+' "$SKILL_DOC" | sed 's|//.*||')"
 
 # ═════════════════════════════════════════════════════════════════════════════
 # Suite 1 — SKILL.md Structural Integrity
@@ -171,7 +180,7 @@ assert  "16 track-manifest.template.md bundled" test -f "$MANIFEST_TPL"
 assert  "17 SBD scripts/ bundle referenced and exists" test -d "$SBD_DIR/scripts"
 assert  "18 SBD templates/ bundle referenced and exists" test -d "$SBD_DIR/templates"
 assert  "19 runs/ gitignore guidance present" \
-  grep -q 'runs/.*gitignore\|Add.*runs.*gitignore' "$SKILL"
+  grep -q 'runs/.*gitignore\|Add.*runs.*gitignore' "$SKILL_DOC"
 assert  "20 Gotchas section present" grep -q "^## Gotchas" "$SKILL"
 assert  "20a track-precheck.sh bundled + referenced in SKILL.md" \
   test -f "$SKILL_DIR/scripts/track-precheck.sh"
@@ -208,7 +217,7 @@ assert  "20j ledger names compaction as the threat" \
 assert_pipe "20k ledger tells the orchestrator to rebuild fleet state from runs/ files" \
   "awk '/^## Orchestrator ledger/,/^## Traceability/' '$SKILL' | grep -q 'runs/'"
 assert  "20l run-record schema carries phase + blocker + next_step for re-dispatch" \
-  grep -q '"phase"' "$SKILL"
+  grep -q '"phase"' "$SKILL_DOC"
 
 # ═════════════════════════════════════════════════════════════════════════════
 # Suite 2 — track-manifest.template.md Completeness
@@ -552,7 +561,7 @@ assert "95 surface 4: run record filename"   grep -q "run record filename\|runs/
 assert "96 'Grep any one surface → reconstruct the whole run'" \
   grep -q "[Gg]rep.*surface.*reconstruct\|reconstruct the whole run" "$SKILL"
 assert "97 PR title contains [run <run-id>] pattern" \
-  grep -q "\[run.*run-id\]\|\[run 2026" "$SKILL"
+  grep -q "\[run.*run-id\]\|\[run 2026" "$SKILL_DOC"
 
 # Validate the run-id format from the embedded JSON matches the stated pattern
 EXAMPLE_RUN_ID="$(echo "$RUN_RECORD_JSON" | jq -r '.run_id' 2>/dev/null || echo '')"
