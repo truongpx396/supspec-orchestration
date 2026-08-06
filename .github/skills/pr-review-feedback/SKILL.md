@@ -1,5 +1,6 @@
 ---
 name: pr-review-feedback
+version: 0.1.0
 description: 'Rework an existing pull request in response to review feedback: triage comments, apply
 fixes on the PR branch under TDD/regression discipline, re-capture evidence at the new fingerprint,
 and update the PR (fast-forward push) or hand back to the reviewer. Use when asked to "address PR
