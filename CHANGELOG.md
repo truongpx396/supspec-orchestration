@@ -64,10 +64,17 @@ two places where the tooling described itself as stronger than it was.
     still ahead of the model's narrative, which it exists to help a reviewer calibrate.
   - Per-track breadcrumb (`runs/<RUN_ID>.dispatch`) is written pretty-printed, matching the run record
     and wave dispatch; it was the only artifact still emitted as a single compact line.
-  - Tests: 226 → 250, including the two forgery vectors, verdict-from-exit-code, worktree-relative
+  - Tests: 226 → 251, including the two forgery vectors, verdict-from-exit-code, worktree-relative
     fingerprinting, both transcript schemas, provider-usage preference, the nine first-publish guard
     boundaries, and `G4` in both directions. Fixed a pre-existing isolation bug that made the audit
     suite depend on the contributor's ambient working diff.
+
+- **CI** — `agent-pr-audit.yml`'s meta-work exemption now covers `CHANGELOG.md`. Every release PR must
+  edit the changelog and, like all maintenance-on-the-pipeline work, produces no run record — so
+  release PRs could satisfy neither the exemption nor the Auto-block requirement. Caught by the gate
+  on this very release. The waiver is unchanged otherwise: it still requires *every* file to be
+  tooling, still waives presence and never integrity, and still raises the 🔴 "this PR modifies the
+  enforcement itself" warning.
 
 ## [0.2.0] - 2026-08-06
 

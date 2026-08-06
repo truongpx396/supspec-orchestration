@@ -2096,6 +2096,23 @@ else
   fail "struct: CI waives the Auto block for meta-work and logs the waiver"
 fi
 
+# The exemption must actually be reachable for the maintenance it exists to cover — and it
+# must still stop at product code. A release PR is the sharp case: it MUST edit CHANGELOG.md
+# and, like every meta PR, produces no run record — so omitting the changelog from
+# META_PATHS_RE left release PRs able to satisfy neither the exemption nor the Auto-block
+# requirement. An unsatisfiable rule gets bypassed rather than obeyed.
+_meta_re="$(grep -m1 'META_PATHS_RE:' "$AGENT_WF" 2>/dev/null | sed "s/.*META_PATHS_RE: *//; s/^'//; s/'\$//")"
+_meta_ok=1
+for _p in CHANGELOG.md README.md .github/skills/x/SKILL.md .github/workflows/w.yml; do
+  printf '%s' "$_p" | grep -qE "$_meta_re" || { _meta_ok=0; break; }
+done
+for _p in src/app.go backend-go/main.go deploy/docker-compose.yml; do
+  printf '%s' "$_p" | grep -qE "$_meta_re" && { _meta_ok=0; break; }
+done
+[ "$_meta_ok" = "1" ] \
+  && pass "struct: meta exemption covers release/docs tooling but never product code" \
+  || fail "struct: meta exemption misclassifies a path (re: $_meta_re)"
+
 # The waiver must cover PRESENCE only. If a block IS present it still goes through the
 # consistency + no-blocking-failure checks, so a waived PR cannot smuggle a broken block.
 if grep -qE 'META_ONLY.*=.*"true".*&&.*!.*grep -qF "\$marker"' "$AGENT_WF" 2>/dev/null; then
