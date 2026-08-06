@@ -550,11 +550,20 @@ The resolved version is printed on the `version:` line of the plan header.
 
 What `--apply` does, in the target repo:
 
-- copies the 3 orchestration skills → `.github/skills/` (Copilot) and/or `.claude/skills/` (Claude Code);
+- copies the 3 orchestration skills into `.claude/skills/` — GitHub Copilot (Dec 2025+) discovers
+  project skills from `.claude/skills/` as well as `.github/skills/`, so a `--both` install writes
+  **one copy** there instead of duplicating into `.github/skills/` too. A Copilot-only install
+  (`--github-copilot` without `--claude-code`) uses `.github/skills/` instead, its own
+  surface-specific path;
 - copies the governance `.github/instructions/*` and the `agent-pr-audit.yml` workflow (both surfaces);
-- for Claude Code, **fetches the dependency skills from GitHub at the versions pinned in `skill-deps.json`**
-  (`obra/superpowers` → `.claude/skills/`, `github/spec-kit` → `.claude/skills/speckit/`); pass `--no-deps`
-  to skip the network fetch;
+- **fetches the dependency skills**, versions pinned in `skill-deps.json`: `obra/superpowers` is
+  vendored (git clone, Claude surface only) into `.claude/skills/superpowers`; the `speckit-*` skills
+  are installed by shelling out to spec-kit's own `specify` CLI (`specify integration install claude`
+  or `copilot`, run ephemerally and version-pinned via `uvx` — requires [uv](https://docs.astral.sh/uv/)
+  on `PATH`), landing under whichever of `.claude/skills/` / `.github/skills/` the single-copy rule
+  above picked, alongside spec-kit's own `.specify/` support files. Requires the target repo to already
+  be an initialized Spec Kit project (see [Prerequisites](#-prerequisites)) — pass `--no-deps` to skip
+  this fetch entirely;
 - delegates the hook bundle to `install-hooks.sh --surface <mapped>` (see below).
 
 Flags: `--github-copilot` / `--claude-code` (at least one; `--both` for both), `--apply`, `--ref TAG`
@@ -567,15 +576,18 @@ containing the current directory), `-h`.
 
 The manual steps below cover the **essentials** — skills + hooks — if you prefer to run them yourself.
 The one-command flow additionally copies `.github/instructions/*` and the `agent-pr-audit.yml` workflow,
-and (for Claude Code) fetches the Superpowers/SpecKit dependency skills; do those by hand too if you go
-fully manual (see [Prerequisites](#-prerequisites) and [Runs on Copilot and Claude Code](#runs-on-copilot-and-claude-code)).
+and fetches the Superpowers/SpecKit dependency skills (Superpowers for Claude Code; SpecKit for
+whichever surface(s) you selected); do those by hand too if you go fully manual (see
+[Prerequisites](#-prerequisites) and [Runs on Copilot and Claude Code](#runs-on-copilot-and-claude-code)).
 
 ### 1️⃣ Copy skills into your repo
 Copy the skill directories into the target repo where **your agent discovers skills**:
 
-- **Copilot** discovers skills under `.github/skills/**/SKILL.md` — copy `.github/skills/` as-is.
-- **Claude Code** discovers skills under `.claude/skills/**/SKILL.md` (project scope). Copy the skill
-  directories there, preserving the tree (the skills cross-reference each other by relative path, e.g.
+- **Claude Code** discovers skills under `.claude/skills/**/SKILL.md` (project scope).
+- **Copilot** discovers skills under `.github/skills/**/SKILL.md`, **and** (Dec 2025+) under
+  `.claude/skills/**/SKILL.md` too — so if you're setting up both surfaces, one copy under
+  `.claude/skills/` covers both and there is no need to duplicate into `.github/skills/`. Preserve
+  the tree (the skills cross-reference each other by relative path, e.g.
   `../executing-parallel-tracks/SKILL.md`):
   ```bash
   mkdir -p .claude/skills
@@ -583,6 +595,8 @@ Copy the skill directories into the target repo where **your agent discovers ski
   cp -R .github/skills/executing-parallel-tracks .claude/skills/
   cp -R .github/skills/pr-review-feedback        .claude/skills/
   ```
+  If you're on a Copilot version that predates cross-directory skill discovery, or your org has it
+  disabled, copy `.github/skills/` as-is instead (or in addition).
 
 Then install the hooks (the `track-*.sh` scripts stay in `.github/hooks/` for both surfaces; only the
 wiring differs):
@@ -688,7 +702,7 @@ snake_case `tool_input.file_path` / `tool_input.command`, `hook_event_name`, `st
 
 | | Copilot | Claude Code |
 |---|---|---|
-| **Skill discovery** | `.github/skills/**/SKILL.md` | `.claude/skills/**/SKILL.md` (or the Superpowers plugin) |
+| **Skill discovery** | `.github/skills/**/SKILL.md`, and (Dec 2025+) `.claude/skills/**/SKILL.md` too | `.claude/skills/**/SKILL.md` (or the Superpowers plugin) |
 | **Hook wiring** | `.github/hooks/track-hooks.json` | `.claude/settings.json` (`hooks` block) |
 | **Install** | `install-hooks.sh --surface copilot` | `install-hooks.sh --surface claude` |
 | **Governance files** | `.github/instructions/*` auto-injected by `applyTo` | read in-session by the skill's Step 4 (no auto-inject needed) |

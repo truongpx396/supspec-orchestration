@@ -25,6 +25,9 @@
              Write plain GitHub Markdown: use real backticks (`like this`), NEVER escaped
              backticks (\` … \`) — escaping leaks literal backslashes into the rendered PR.
 
+  The FOOTER at the very end (after "After merge") is the one fixed exception to "delete what
+  doesn't apply" — keep it verbatim, as the last thing in the body, on every PR.
+
   Everything between {{ }} is a fill-in. Remove these HTML comments before publishing.
 -->
 
@@ -84,3 +87,7 @@
 
 #### After merge
 {{What the next stage/PR should pick up. Delete if this is terminal.}}
+
+---
+
+ *Powered by 🌱 [Supspec Orchestration](https://github.com/truongpx396/supspec-orchestration)* 🤖

@@ -2103,7 +2103,7 @@ fi
 # requirement. An unsatisfiable rule gets bypassed rather than obeyed.
 _meta_re="$(grep -m1 'META_PATHS_RE:' "$AGENT_WF" 2>/dev/null | sed "s/.*META_PATHS_RE: *//; s/^'//; s/'\$//")"
 _meta_ok=1
-for _p in CHANGELOG.md README.md .github/skills/x/SKILL.md .github/workflows/w.yml; do
+for _p in CHANGELOG.md README.md install.sh .github/skills/x/SKILL.md .github/workflows/w.yml; do
   printf '%s' "$_p" | grep -qE "$_meta_re" || { _meta_ok=0; break; }
 done
 for _p in src/app.go backend-go/main.go deploy/docker-compose.yml; do
