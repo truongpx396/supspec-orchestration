@@ -250,10 +250,15 @@ printf '\n_%s_\n' "$stat_line"
 printf '\n#### Evidence\n\n'
 if [ -f "$rec" ] && [ "$(jq -r '.evidence | length' "$rec" 2>/dev/null || echo 0)" -gt 0 ]; then
   printf '| Kind | Command | Result | Fingerprint |\n|---|---|---|---|\n'
+  # Read the verdict track-evidence.sh recorded at capture; only fall back to
+  # grepping for records written before verdicts existed. This script used to carry
+  # its own default fail-pattern, which differed from the gate's — so the same
+  # capture could be ❌ here and acceptable there, with neither side flagging it.
   fail_pat="${TRACK_FAIL_PATTERN:-FAIL|--- FAIL|Error:|panic:|Traceback|AssertionError|✗|npm ERR!}"
   jq -r --arg fp "$fail_pat" '
     .evidence[] |
-    ((.response // "") | test($fp)) as $failed |
+    (if (.verdict // "") != "" then (.verdict == "fail")
+     else ((.response // "") | test($fp)) end) as $failed |
     "| \(.kind // "?") | `\((.cmd // "?") | gsub("\\|";"\\|"))` | \(if $failed then "❌ FAIL" else "✅ pass" end) | `\((.fingerprint // "?")[0:12])` |"
   ' "$rec" 2>/dev/null || printf '| _(evidence unreadable)_ | | | |\n'
 else
@@ -275,11 +280,20 @@ fi
 # Degrades quietly: an older install without track-audit.sh simply omits the section, and
 # --warn-only keeps a failing audit from breaking report rendering (this script stays
 # read-only and non-blocking; the audit does its own blocking at the Stop gate and Step 8).
+#
+# DEFINED HERE, RENDERED LAST (see the call below the run stats). It is the verdict on the
+# run, not a detail of the mechanical dump, so it reads at `###` — a peer of the auto
+# block's `### Run` and of the model's `### Asserted` zone rather than a subsection of
+# either. It stays INSIDE the auto-block markers because it is machine-derived, and it sits
+# at the end of that block so it is the last un-authored thing a reviewer sees before the
+# model's narrative begins: its whole function is to calibrate how much of that narrative
+# to believe, which only works if it is read first.
+render_discipline_audit() {
 _audit="$(cd "${BASH_SOURCE[0]%/*}" && pwd)/track-audit.sh"
 if [ -f "$_audit" ]; then
   _aj="$(RUN_ID="$run_id" RUNS_DIR="$RUNS_DIR" bash "$_audit" --json --warn-only 2>/dev/null || true)"
   if [ -n "$_aj" ] && printf '%s' "$_aj" | jq -e '.summary' >/dev/null 2>&1; then
-    printf '\n#### Discipline audit (`track-audit.sh` — derived from artifacts)\n\n'
+    printf '\n---\n\n### Discipline audit — mechanical invariants (derived from artifacts, not claimed)\n\n'
     printf -- '- %s\n' "$(printf '%s' "$_aj" | jq -r '
       "**\(.summary.pass) passed · \(.summary.warn) warning(s) · \(.summary.fail) failure(s)**"
       + (if .summary.fail > 0 then "  ❌ **blocking — this PR should not have been opened**"
@@ -306,11 +320,12 @@ if [ -f "$_audit" ]; then
     # Second-order caveat: even some PASSing rows above rest on stamps the model wrote
     # itself. Naming which ones keeps a reviewer from reading the whole table as one
     # uniform grade of proof.
-    printf '\n_Also note the checks above are not all equally strong. `I1`/`I2`/`T2` (git state), `G1`-`G4` (bundle vs. the real diff), `G3`/`M1` (hook-written `trace[]`) and `T1`/`E1`/`E2` (hook-written `evidence[]`) are derived from artifacts the model does not author. `P1`/`P2` (phase stamps) and `F1` (terminal status) read stamps the model wrote itself via `track-note.sh` — they detect an omitted step, not a misreported one._\n'
+    printf '\n_Also note the checks above are not all equally strong. `I1`/`I2`/`T2` (git state), `G2`/`G4` (bundle vs. the real diff), `M1` (hook-written `trace[]`) and `T1`/`E1`/`E2` (hook-written `evidence[]`) are derived from artifacts the model does not author. `P1`/`P2` (phase stamps) and `F1` (terminal status) read stamps the model wrote itself via `track-note.sh` — they detect an omitted step, not a misreported one. `G1` and `G3` are MIXED and were previously listed as artifact-derived, which overstated them: both read `governance_bundle`, a model-written field. `G1` re-hashes the file it points at, so the content is real but the pointer is chosen; `G3` compares the model'"'"'s own timestamp against hook-written `trace[]`, so lowering that stamp satisfies it — read `G3`'"'"'s message, which now says whether a hook-observed bundle read corroborated the ordering._\n'
     printf '\n_Full list: `tests/prompt-level-checklist.md`. A clean audit is necessary, not sufficient._\n'
     printf '</details>\n'
   fi
 fi
+}
 
 # Mechanical run stats.
 printf '\n#### Run stats (hook-observed)\n\n'
@@ -336,5 +351,9 @@ if [ -f "$rec" ] && { [ "$(jq -r '.skills | length' "$rec" 2>/dev/null || echo 0
   fi
   [ "${iterations:-0}" -gt 0 ] && printf -- '- **Iterations (RED→GREEN→review cycles):** %s\n' "$iterations"
 fi
-printf '<!-- END track-report auto block -->\n'
+
+# The verdict, last in the machine-rendered zone — see the note above its definition.
+render_discipline_audit
+
+printf '\n<!-- END track-report auto block -->\n'
 exit 0

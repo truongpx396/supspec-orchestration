@@ -438,6 +438,37 @@ assert_allow "guard: ff-push with TRACK_ALLOW_FF_PUSH=1 -> allow" \
   "$GUARD" "$(mk_term "$T_FFPUSH_CMD")" \
   "TRACK_ALLOWED_PREFIXES=backend-go/" "TRACK_ALLOW_FF_PUSH=1"
 
+# --- first-publish carve-out -------------------------------------------------------
+# `gh pr create` cannot open a PR for a branch the remote has never seen, and fails
+# non-interactively rather than offering to push. Denying that push made the skill's own
+# terminal step unreachable — on a real run the worker escaped by self-granting
+# TRACK_ALLOW_FF_PUSH, a flag meant for something else. The carve-out must be exactly
+# wide enough to publish ONE branch ONCE, so both directions are pinned here.
+PUB="$(mktemp -d)"
+( cd "$PUB" && git init -q --bare remote.git && git clone -q remote.git work \
+  && cd work && git config user.email t@t && git config user.name t \
+  && git commit -q --allow-empty -m init && git branch -M main \
+  && git push -q origin main && git checkout -qb feat/mywork ) >/dev/null 2>&1
+pub() { # pub <label> <cmd> <ALLOW|DENY>
+  local out got
+  out="$( cd "$PUB/work" && printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "$2" \
+          | TRACK_ALLOWED_PREFIXES="src/" TRACK_DEFAULT_BRANCH=main bash "$GUARD" 2>&1 )"
+  got=DENY; printf '%s' "$out" | grep -q '"deny"' || got=ALLOW
+  [ "$got" = "$3" ] && pass "guard: $1" || fail "guard: $1 (got $got, want $3)"
+}
+pub "publishing own unpublished branch -> allow"   "git push -u origin feat/mywork"      ALLOW
+pub "publishing via HEAD -> allow"                 "git push -u origin HEAD"             ALLOW
+pub "publish must not target the base branch"      "git push origin main"                DENY
+pub "publish must not redirect (HEAD:main)"        "git push origin HEAD:main"           DENY
+pub "publish must not push another branch"         "git push origin feat/other"          DENY
+pub "publish must not delete a remote branch"      "git push origin --delete feat/mywork" DENY
+pub "publish must not be a bulk push (--all)"      "git push --all origin"               DENY
+pub "publish must not carry --force"               "git push --force origin feat/mywork" DENY
+# Once the branch exists on the remote it is an UPDATE — the rework flag keeps its meaning.
+( cd "$PUB/work" && git push -q -u origin feat/mywork ) >/dev/null 2>&1
+pub "second push of a published branch -> deny"    "git push origin feat/mywork"         DENY
+rm -rf "$PUB"
+
 assert_deny "guard: DROP TABLE with TRACK_GUARD_DESTRUCTIVE -> deny" \
   "$GUARD" "$(mk_term "$T_DROP_CMD")" "TRACK_GUARD_DESTRUCTIVE=1"
 
@@ -512,6 +543,86 @@ kind2=$(jq -r '.evidence[-1].kind // empty' "$PROD_RUNS/$PROD_RID2.json" 2>/dev/
 [ "$kind2" = "go-test" ] \
   && pass "evidence(producer): EVIDENCE_KINDS label derived (go-test)" \
   || fail "evidence(producer): EVIDENCE_KINDS label derived (got: $kind2)"
+
+# --- forgery: a command that MENTIONS a test must not count as running one ---------
+# Both cases below were observed manufacturing a complete required-evidence pack on a
+# real run, because the pattern was matched against the raw command text.
+PROD_FORGE="forge-$(date +%s)"
+# 1. Writing the PR body. It embeds the evidence table, which quotes the very commands
+#    being matched — so the report certified itself.
+jq -nc '{tool_name:"Bash",
+         tool_input:{command:"cat > pr-body.md <<'"'"'PRBODY_EOF'"'"'\n| go-test | `go test ./...` | pass |\ngo test ./... 2>&1\nPRBODY_EOF\nwc -l pr-body.md"},
+         tool_response:{stdout:"220 pr-body.md"}}' \
+  | RUN_ID="$PROD_FORGE" RUNS_DIR="$PROD_RUNS" TRACK_EVIDENCE_KINDS="go-test:go test" \
+    bash "$EVIDENCE" >/dev/null 2>&1 || true
+[ "$(jq -r '.evidence | length' "$PROD_RUNS/$PROD_FORGE.json" 2>/dev/null || echo 0)" = "0" ] \
+  && pass "evidence(producer): heredoc body quoting a test command is NOT captured" \
+  || fail "evidence(producer): heredoc body quoting a test command was captured as evidence"
+
+# 2. Echoing a payload into a hook while debugging it.
+jq -nc '{tool_name:"Bash",
+         tool_input:{command:"echo '"'"'{\"command\":\"npx tsc --noEmit\"}'"'"' | bash track-evidence.sh"},
+         tool_response:{stdout:"exit: 0"}}' \
+  | RUN_ID="$PROD_FORGE" RUNS_DIR="$PROD_RUNS" TRACK_EVIDENCE_KINDS="ts:tsc --noEmit" \
+    bash "$EVIDENCE" >/dev/null 2>&1 || true
+[ "$(jq -r '.evidence | length' "$PROD_RUNS/$PROD_FORGE.json" 2>/dev/null || echo 0)" = "0" ] \
+  && pass "evidence(producer): test command inside a quoted literal is NOT captured" \
+  || fail "evidence(producer): quoted-literal test command was captured as evidence"
+
+# ...while a real invocation still is, including with a prefix and quoted arguments.
+jq -nc '{tool_name:"Bash",tool_input:{command:"npx tsc --noEmit --pretty \"false\""},
+         tool_response:{stdout:""}}' \
+  | RUN_ID="$PROD_FORGE" RUNS_DIR="$PROD_RUNS" TRACK_EVIDENCE_KINDS="ts:tsc --noEmit" \
+    bash "$EVIDENCE" >/dev/null 2>&1 || true
+[ "$(jq -r '.evidence[-1].kind // empty' "$PROD_RUNS/$PROD_FORGE.json" 2>/dev/null)" = "ts" ] \
+  && pass "evidence(producer): real run with prefix + quoted args still captured" \
+  || fail "evidence(producer): real run with prefix + quoted args was dropped"
+
+# --- verdict is settled at capture, from the strongest signal available ------------
+# Text-only grading passed captures that printed `exit: 1`, and the gate and the report
+# each carried their OWN default pattern, so they could grade the same row differently.
+PROD_V="verdict-$(date +%s)"
+v_cap() { # v_cap <response-json> -> echo verdict
+  jq -nc --argjson r "$1" '{tool_name:"Bash",tool_input:{command:"go test ./..."},tool_response:$r}' \
+    | RUN_ID="$PROD_V" RUNS_DIR="$PROD_RUNS" TRACK_EVIDENCE_KINDS="go-test:go test" \
+      bash "$EVIDENCE" >/dev/null 2>&1 || true
+  jq -r '.evidence[-1].verdict // empty' "$PROD_RUNS/$PROD_V.json" 2>/dev/null
+}
+[ "$(v_cap '{"stdout":"no packages to test\nexit: 1"}')" = "fail" ] \
+  && pass "evidence(producer): 'exit: 1' in output grades fail" \
+  || fail "evidence(producer): 'exit: 1' in output was graded pass"
+[ "$(v_cap '{"stdout":"ok example 0.4s","returnCodeInterpretation":"No matches found"}')" = "fail" ] \
+  && pass "evidence(producer): returnCodeInterpretation (non-zero exit) grades fail" \
+  || fail "evidence(producer): returnCodeInterpretation ignored"
+[ "$(v_cap '{"stdout":"ok example 0.4s  PASS"}')" = "pass" ] \
+  && pass "evidence(producer): a genuinely clean run grades pass" \
+  || fail "evidence(producer): a clean run was graded fail"
+[ "$(v_cap '{"stdout":"done","exit_code":3}')" = "fail" ] \
+  && pass "evidence(producer): explicit exit_code beats clean-looking text" \
+  || fail "evidence(producer): explicit exit_code ignored"
+
+# --- the fingerprint must follow the WORKTREE, not the hook's CWD -------------------
+# A PostToolUse hook inherits the session CWD — the main checkout — even while the agent
+# edits a linked worktree. Fingerprinting there describes a tree nobody is touching: on a
+# real run every capture shared one fingerprint across three days of file creation, so the
+# gate's staleness check was inert and the audit's E1 "converged" passed for that reason.
+FP_WT="$(mktemp -d)"
+( cd "$FP_WT" && git init -q main && cd main && git config user.email t@t && git config user.name t \
+  && git commit -q --allow-empty -m init && git worktree add -q ../tree -b feat/fp ) >/dev/null 2>&1
+mkdir -p "$FP_WT/main/runs"
+printf '{"run_id":"fpw","branch":"feat/fp"}\n' > "$FP_WT/main/runs/fpw.dispatch"
+fp_cap() { ( cd "$FP_WT/main" \
+    && printf '{"tool_name":"Bash","tool_input":{"command":"go test ./..."},"tool_response":{"stdout":"ok"}}' \
+       | RUN_ID=fpw RUNS_DIR="$FP_WT/main/runs" TRACK_EVIDENCE_KINDS="go-test:go test" \
+         bash "$EVIDENCE" >/dev/null 2>&1 ) || true
+  jq -r '.evidence[-1].fingerprint // empty' "$FP_WT/main/runs/fpw.json" 2>/dev/null; }
+fp_a="$(fp_cap)"
+echo "work happens here" > "$FP_WT/tree/newfile.go"   # worktree only; main is untouched
+fp_b="$(fp_cap)"
+[ -n "$fp_a" ] && [ "$fp_a" != "$fp_b" ] \
+  && pass "evidence(producer): fingerprint tracks the run branch's worktree, not the hook CWD" \
+  || fail "evidence(producer): fingerprint blind to worktree edits (fp_a=$fp_a fp_b=$fp_b)"
+rm -rf "$FP_WT"
 
 # Producer fingerprint MUST equal the current tree fingerprint (== gate's compute)
 fp_prod=$(jq -r '.evidence[-1].fingerprint // empty' "$PROD_RUNS/$PROD_RID2.json" 2>/dev/null)
@@ -856,6 +967,18 @@ aud_seed() { # aud_seed <run-id> — a clean, fully-disciplined story run
                 {t:"2026-01-01T04:00:00Z",kind:"go-test",cmd:"go test",response:"ok example 0.4s PASS all 12 tests passed",fingerprint:"fp1"}]}' \
     > "$AUD_RUNS/$rid.json"
 }
+# The audit derives `changed` from the REAL working diff, so every check reading it is a
+# function of whatever the contributor happens to have edited. G4 (trust boundary) greps
+# those paths for auth|secret|token|… — so editing a file whose NAME contains one of those
+# words (track-tokens.sh does) flips G4 to FAIL and takes down every assertion in this
+# section that expects a clean run, with nothing about the change being wrong.
+#
+# Pin the pattern section-wide to a sentinel matching no real path, so these cases test the
+# record-derived checks they are actually about. Exported rather than threaded through each
+# helper because the section invokes the audit directly in several places, and one missed
+# call site brings the flakiness back. G4's own behaviour is asserted below in an isolated
+# repo that sets the pattern explicitly, which overrides this.
+export TRACK_TRUST_BOUNDARY_PATTERN="__no_such_trust_boundary_path__"
 aud_json() { RUN_ID="$1" RUNS_DIR="$AUD_RUNS" TRACK_BASE_REF="" bash "$AUDIT" --json 2>/dev/null; }
 aud_verdict() { aud_json "$1" | jq -r --arg c "$2" '.checks[] | select(.id==$c) | .verdict'; }
 
@@ -868,6 +991,59 @@ else
 fi
 [ "$(aud_verdict clean G1)" = "PASS" ] && pass "audit: G1 passes when bundle exists + sha matches" || fail "audit: G1 passes when bundle exists + sha matches"
 [ "$(aud_verdict clean T1)" = "PASS" ] && pass "audit: T1 confirms RED-before-green from evidence[]" || fail "audit: T1 confirms RED-before-green from evidence[]"
+
+# G3 provenance. The ordering it checks compares a MODEL-written stamp
+# (governance_bundle.t) against hook-written trace[] — so lowering that stamp satisfies it,
+# and a real run did exactly that and then cited G3 as confirmation. The verdict is
+# unchanged (a gate that fires on every run gets disabled); what must not regress is that
+# the message says which side supported it, so a reviewer can weigh it.
+aud_seed g3claim
+g3_msg() { aud_json "$1" | jq -r '.checks[] | select(.id=="G3") | .message'; }
+case "$(g3_msg g3claim)" in
+  *"model's own stamp"*) pass "audit: G3 names a self-reported stamp when nothing corroborates it" ;;
+  *) fail "audit: G3 does not disclose that it rests on a model-written stamp (got: $(g3_msg g3claim))" ;;
+esac
+# A hook-observed read of the pinned bundle before the first dispatch IS corroboration.
+jq '.governance_reads=[{t:"2026-01-01T00:20:00Z",tool:"Read",via:"gov.md"}]' \
+  "$AUD_RUNS/g3claim.json" > "$AUD_RUNS/t" && mv "$AUD_RUNS/t" "$AUD_RUNS/g3claim.json"
+case "$(g3_msg g3claim)" in
+  *corroborated*) pass "audit: G3 reports hook corroboration when a bundle read precedes dispatch" ;;
+  *) fail "audit: G3 ignores hook-observed corroboration (got: $(g3_msg g3claim))" ;;
+esac
+[ "$(aud_verdict g3claim G3)" = "PASS" ] \
+  && pass "audit: G3 verdict stays PASS in both provenance cases" \
+  || fail "audit: G3 verdict changed unexpectedly"
+
+# G4 both directions. Previously exercised only incidentally via the clean run, whose
+# diff is whatever the contributor edited — so G4 could flip on an unrelated change and
+# was never asserted on purpose. Run in an isolated repo with a known changed path.
+G4_ISO="$(mktemp -d)"; ( cd "$G4_ISO" && git init -q . \
+  && git config user.email t@t && git config user.name t \
+  && echo x > seed && git add -A && git commit -qm seed >/dev/null 2>&1 \
+  && git branch -M main && mkdir -p src && echo y > src/auth-handler.go ) >/dev/null 2>&1
+mkdir -p "$G4_ISO/runs"
+g4_seed() { # g4_seed <bundle-body>
+  printf '%s\n' "$1" > "$G4_ISO/bundle.md"
+  jq -nc --arg p "$G4_ISO/bundle.md" \
+    '{run_id:"g4",v:1,tool_calls:1,phase:{mode:"story",step:"green"},
+      phase_log:[{t:"a",mode:"story",step:"governance"}],
+      governance_bundle:{path:$p},trace:[],evidence:[]}' > "$G4_ISO/runs/g4.json"
+}
+_g4() { ( cd "$G4_ISO" && RUN_ID=g4 RUNS_DIR=runs TRACK_BASE_REF=main \
+          TRACK_TRUST_BOUNDARY_PATTERN="auth|secret|token" \
+          bash "$AUDIT" --json --warn-only 2>/dev/null ) \
+        | jq -r '.checks[] | select(.id=="G4") | .verdict'; }
+g4_seed '# bundle
+## code-review-generic.instructions.md'
+[ "$(_g4)" = "FAIL" ] \
+  && pass "audit: G4 fails when a trust-boundary path is touched without security-and-owasp" \
+  || fail "audit: G4 fails on trust-boundary path without security add-on (got $(_g4))"
+g4_seed '# bundle
+## security-and-owasp.instructions.md'
+[ "$(_g4)" = "PASS" ] \
+  && pass "audit: G4 passes once the bundle pulls in security-and-owasp" \
+  || fail "audit: G4 passes once the bundle pulls in security-and-owasp (got $(_g4))"
+rm -rf "$G4_ISO"
 
 # Each violation must be caught.
 aud_seed g1miss; jq '.governance_bundle.path="/nonexistent/gone.md"' "$AUD_RUNS/g1miss.json" > "$AUD_RUNS/t" && mv "$AUD_RUNS/t" "$AUD_RUNS/g1miss.json"
@@ -1177,7 +1353,44 @@ else
   fail "tokens: no-op when TRACK_MAX_TOKEN_ESTIMATE=0"
 fi
 
-rm -rf "$TOK_RUNS" "$TOK_TX"
+# --- transcript schema coverage ---------------------------------------------------
+# The fixture above is the dotted-`.type` schema. Claude Code writes a BARE .type with
+# the text under .message.content — reading only one schema silently yields 0 chars,
+# which then disables the ceiling entirely (0 never exceeds it), so the budget guard
+# fails open with no symptom beyond a `~0` in the PR body.
+TOK_CC="$(mktemp)"
+printf '%s\n' \
+  '{"type":"user","message":{"content":"implement the handler for this task"}}' \
+  '{"type":"assistant","message":{"content":[{"type":"text","text":"writing it now"}]}}' \
+  > "$TOK_CC"
+jq -nc '{"run_id":"tok-cc","v":1,"trace":[],"evidence":[],"tool_calls":0}' > "$TOK_RUNS/tok-cc.json"
+printf '{"hook_event_name":"Stop","transcript_path":"%s"}' "$TOK_CC" | \
+  TRACK_MAX_TOKEN_ESTIMATE=200000 RUN_ID="tok-cc" RUNS_DIR="$TOK_RUNS" bash "$TOKENS" >/dev/null 2>&1 || true
+jq -e '.token_estimate > 0' "$TOK_RUNS/tok-cc.json" >/dev/null 2>&1 \
+  && pass "tokens: bare .type/.message.content transcript schema is counted" \
+  || fail "tokens: bare .type/.message.content transcript schema counted as 0 (ceiling fails open)"
+
+# --- provider usage beats the heuristic --------------------------------------------
+# When the transcript carries the API's own per-turn usage, use it: it is authoritative
+# and already includes the system prompt and tool schemas the heuristic is blind to.
+TOK_USE="$(mktemp)"
+printf '%s\n' \
+  '{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":10,"output_tokens":100,"cache_read_input_tokens":9000,"cache_creation_input_tokens":400}}}' \
+  '{"type":"assistant","message":{"content":[{"type":"text","text":"ho"}],"usage":{"input_tokens":5,"output_tokens":50,"cache_read_input_tokens":9000,"cache_creation_input_tokens":100}}}' \
+  > "$TOK_USE"
+jq -nc '{"run_id":"tok-use","v":1,"trace":[],"evidence":[],"tool_calls":0}' > "$TOK_RUNS/tok-use.json"
+printf '{"hook_event_name":"Stop","transcript_path":"%s"}' "$TOK_USE" | \
+  TRACK_MAX_TOKEN_ESTIMATE=200000 RUN_ID="tok-use" RUNS_DIR="$TOK_RUNS" bash "$TOKENS" >/dev/null 2>&1 || true
+# estimate = input(15) + cache_write(500) + output(150) = 665; cache_read is excluded.
+if jq -e '.token_estimate == 665
+          and (.token_estimate_method | test("authoritative"))
+          and .token_usage.cache_read == 18000' "$TOK_RUNS/tok-use.json" >/dev/null 2>&1; then
+  pass "tokens: message.usage preferred; estimate excludes cache_read, breakdown recorded"
+else
+  fail "tokens: message.usage handling (got $(jq -c '{token_estimate,token_usage}' "$TOK_RUNS/tok-use.json" 2>/dev/null))"
+fi
+
+rm -rf "$TOK_RUNS" "$TOK_TX" "$TOK_CC" "$TOK_USE"
 
 # ---------------------------------------------------------------------------
 # SUITE 10 -- track-notify.sh
@@ -1455,7 +1668,9 @@ else
 fi
 
 # The inline caveat must sit OUTSIDE the collapsed block (i.e. before <details> opens).
-_inline="$(printf '%s' "$A_OUT" | sed -n '/#### Discipline audit/,/<details>/p')"
+# Heading-level-agnostic: this asserts WHERE the caveat sits, not how deep the section is
+# nested, and the audit has been promoted from `####` to `###` once already.
+_inline="$(printf '%s' "$A_OUT" | sed -n '/^#\{2,\} Discipline audit/,/<details>/p')"
 if printf '%s' "$_inline" | grep -q 'Not a clean bill of health'; then
   pass "report: audit scope limit is stated inline, not hidden behind <details>"
 else

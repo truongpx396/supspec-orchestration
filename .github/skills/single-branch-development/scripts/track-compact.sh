@@ -134,8 +134,12 @@ case "$ev" in
     # (runs/<RUN_ID>.governance.md), so it is specific enough not to collide.
     case "$target" in
       *"$gov_path"*)
-        write_rec --arg t "$ts" --arg tool "${tool:-unknown}" \
-          '.governance_reads = ((.governance_reads // []) + [{t:$t, tool:$tool}])
+        # Record WHAT matched, not just that something did. `{t, tool}` alone reads as
+        # "at 09:27 some Bash command mentioned the bundle" — which cannot distinguish a
+        # real `cat runs/<id>.governance.md` re-read from a command that merely names the
+        # path in passing. Truncated because a matching command can be a whole heredoc.
+        write_rec --arg t "$ts" --arg tool "${tool:-unknown}" --arg via "$target" \
+          '.governance_reads = ((.governance_reads // []) + [{t:$t, tool:$tool, via:($via[0:200])}])
            | .last_ts = $t'
         ;;
     esac
