@@ -146,17 +146,30 @@ required="$(printf '%s\n' $required | sed '/^$/d' | sort -u | tr '\n' ' ')"
   block "Evidence gate: no run record at $rec yet. The diff requires evidence for:${required%% }. Run those checks and let them be captured before finishing."
 
 # Current code fingerprint — must match track-evidence.sh's computation exactly
-# (HEAD + tracked diff + untracked non-ignored file names & content hashes).
+# (HEAD + tracked diff + untracked non-ignored file names & content hashes),
+# INCLUDING the worktree resolution: both sides fingerprint the run branch's
+# worktree rather than the hook's CWD. If only one side is changed the two always
+# disagree and every capture reads as stale.
 hash_cmd() { if command -v shasum >/dev/null 2>&1; then shasum; else sha1sum; fi; }
-current_fp="$({
-  git rev-parse HEAD 2>/dev/null || echo no-head
-  git diff HEAD 2>/dev/null || true
-  u="$(git ls-files --others --exclude-standard 2>/dev/null || true)"
-  if [ -n "$u" ]; then
-    printf '%s\n' "$u"
-    printf '%s\n' "$u" | git hash-object --stdin-paths 2>/dev/null || true
-  fi
-} | hash_cmd | cut -d' ' -f1)"
+fp_dir() { # echo the dir to fingerprint: the run branch's worktree, else CWD
+  _b="$(jq -r '.branch // empty' "$RUNS_DIR/$RUN_ID.dispatch" 2>/dev/null || true)"
+  [ -n "$_b" ] || { pwd; return 0; }
+  _w="$(git worktree list --porcelain 2>/dev/null | awk -v b="refs/heads/$_b" '
+          /^worktree /{p=substr($0,10)} /^branch /{if ($2==b){print p; exit}}' || true)"
+  [ -n "$_w" ] && [ -d "$_w" ] && printf '%s\n' "$_w" || pwd
+}
+current_fp="$(
+  cd "$(fp_dir)" 2>/dev/null || true
+  {
+    git rev-parse HEAD 2>/dev/null || echo no-head
+    git diff HEAD 2>/dev/null || true
+    u="$(git ls-files --others --exclude-standard 2>/dev/null || true)"
+    if [ -n "$u" ]; then
+      printf '%s\n' "$u"
+      printf '%s\n' "$u" | git hash-object --stdin-paths 2>/dev/null || true
+    fi
+  } | hash_cmd | cut -d' ' -f1
+)"
 
 # Generic failure markers; repos extend via TRACK_FAIL_PATTERN for stack specifics.
 fail_re="${TRACK_FAIL_PATTERN:-}"
@@ -172,10 +185,18 @@ for kind in $required; do
   fi
   fp="$(jq -r '.fingerprint // empty' <<<"$entry")"
   resp="$(jq -r '.response // empty' <<<"$entry")"
+  verdict="$(jq -r '.verdict // empty' <<<"$entry")"
   if [ "$fp" != "$current_fp" ]; then
     stale="$stale $kind"; continue
   fi
-  if printf '%s' "$resp" | grep -Eq "$fail_re"; then
+  # Prefer the verdict track-evidence.sh settled at capture — it saw the exit code,
+  # which the response text often does not carry. Re-grepping here is the fallback
+  # for records written before verdicts existed; when both sides grep independently
+  # they drift, which is how a capture printing `exit: 1` was graded pass by one
+  # side and never questioned by the other.
+  if [ -n "$verdict" ]; then
+    [ "$verdict" = "fail" ] && { failed="$failed $kind"; continue; }
+  elif printf '%s' "$resp" | grep -Eq "$fail_re"; then
     failed="$failed $kind"; continue
   fi
 done

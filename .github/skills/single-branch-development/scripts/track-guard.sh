@@ -186,14 +186,59 @@ case "$tool" in
       *"gh pr merge"* | *"git merge "* | *"--force"* | *"--no-verify"* | *"git reset --hard"*)
         deny "blocked by autonomy boundary: merging/rewriting history is the merge gate's job (human or merge queue), not the worker's." ;;
     esac
-    # `git push` lockout — workers normally stop at `gh pr create --draft`. A
-    # PR-rework flow that must update an existing PR branch opts in via
-    # TRACK_ALLOW_FF_PUSH; the always-deny block above still bars --force, so
-    # only a plain fast-forward push reaches here.
+    # `git push` lockout — workers normally stop at `gh pr create --draft`. Two
+    # carve-outs, and nothing else gets through:
+    #
+    #   1. TRACK_ALLOW_FF_PUSH — explicit opt-in for a PR-rework flow that updates an
+    #      already-published branch. The always-deny block above still bars --force.
+    #
+    #   2. The FIRST publish of the worker's own branch. `gh pr create` cannot open a PR
+    #      for a branch the remote has never seen; non-interactively it fails outright
+    #      rather than offering to push. Denying this made the skill's OWN documented
+    #      terminal step unreachable, leaving a worker no in-bounds move — on a real run
+    #      that pressure produced exactly the predictable outcome: the worker self-granted
+    #      TRACK_ALLOW_FF_PUSH, a flag documented for a different purpose, to get unstuck.
+    #      A rule with no compliant path does not produce compliance, it produces
+    #      workarounds, so the compliant path is now explicit and narrow.
+    #
+    # The carve-out is deliberately the narrowest thing that reaches `gh pr create`: it
+    # publishes ONE branch ONCE. A second push of the same branch is an update and still
+    # requires the opt-in, so the rework flag keeps its documented meaning.
+    is_first_publish() { # is_first_publish <cmd> — 0 only for a branch-publishing push
+      _c="$1"
+      # Bulk/destructive push modes are never a publish (--force is denied above).
+      case "$_c" in
+        *--delete*|*--mirror*|*--all*|*--tags*|*--prune*|*" -d "*) return 1 ;;
+      esac
+      _wt="${GIT_WT_ROOT:-$PWD}"
+      _cur="$(git -C "$_wt" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")"
+      { [ -n "$_cur" ] && [ "$_cur" != "HEAD" ]; } || return 1
+      # Never publish the base/default branch — that is the merge gate's ref, not ours.
+      _def="${TRACK_DEFAULT_BRANCH:-}"
+      [ -n "$_def" ] || { _b="${TRACK_BASE_REF:-}"; _def="${_b##*/}"; }
+      [ -n "$_def" ] || _def="main"
+      [ "$_cur" != "$_def" ] || return 1
+      _rem="$(git -C "$_wt" config --get "branch.$_cur.remote" 2>/dev/null || echo origin)"
+      [ -n "$_rem" ] || _rem=origin
+      # Already on the remote → this is an update, not a first publish. Needs the opt-in.
+      ! git -C "$_wt" rev-parse --verify --quiet "refs/remotes/$_rem/$_cur" >/dev/null 2>&1 || return 1
+      # A refspec, if present, must name THIS branch — no `HEAD:main` style redirection.
+      _spec="$(printf '%s' "$_c" | sed -n 's/.*git push//p' | tr ' \t' '\n\n' \
+               | grep -v '^-' | grep -v "^${_rem}$" | grep -v '^$' | tail -1 || true)"
+      case "$_spec" in
+        ""|HEAD|"$_cur"|"HEAD:$_cur"|"$_cur:$_cur") return 0 ;;
+        *) return 1 ;;
+      esac
+    }
     case "$cmd" in
       *"git push"*)
-        [ -n "${TRACK_ALLOW_FF_PUSH:-}" ] ||
-          deny "blocked by autonomy boundary: workers stop at 'gh pr create --draft'. Pushing is the merge gate's job. (Set TRACK_ALLOW_FF_PUSH=1 for a PR-rework flow that updates an existing branch with a fast-forward push.)" ;;
+        if [ -n "${TRACK_ALLOW_FF_PUSH:-}" ]; then
+          :   # explicit opt-in (PR-rework); --force et al. still denied above
+        elif is_first_publish "$cmd"; then
+          :   # first publish of this worker's own branch — the path to `gh pr create`
+        else
+          deny "blocked by autonomy boundary: workers stop at 'gh pr create --draft'. Pushing is the merge gate's job. (Publishing your own branch for the first time is allowed so 'gh pr create' can reach the remote; this push is an update, a different branch, or a bulk/destructive mode. Set TRACK_ALLOW_FF_PUSH=1 for a PR-rework flow that updates an already-published branch.)"
+        fi ;;
     esac
 
     # OPTIONAL destructive-infra guard — irreversible data/infra ops. Off unless

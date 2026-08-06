@@ -3,27 +3,42 @@
 #                   and enforce a per-worker token ceiling (TRACK_MAX_TOKEN_ESTIMATE).
 #
 # Fires ONCE when the agent ends a turn (Stop / agentStop). Reads the transcript
-# file supplied in the hook payload, extracts every text field the model sent or
-# received, counts characters, and writes a `token_estimate` (chars / 4) into the
-# run record. The estimate is OVERWRITTEN on every turn because the transcript is
-# cumulative — re-reading it always gives the grand total for the whole session so
-# far; appending would double-count.
+# file supplied in the hook payload and writes `token_estimate` + the full
+# `token_usage` breakdown into the run record. Both are OVERWRITTEN on every turn
+# because the transcript is cumulative — re-reading it always gives the grand total
+# for the whole session so far; appending would double-count.
 #
-# WHY chars/4 and not tiktoken:
-#   - tiktoken / the Claude tokenizer are not always available in a hook shell.
-#   - 1 token ≈ 4 characters is the standard rough heuristic for English/code.
-#   - The estimate UNDERCOUNTS because it cannot see:
-#       • The hidden system prompt (never in the transcript)
-#       • Injected tool-schema definitions
-#       • Server-side cached-token discounts
-#   Use it as a "roughly how heavy was this run" signal; for billing use the
-#   model provider's actual usage API.
+# TWO SOURCES, in preference order:
 #
-# Text sources extracted from the transcript JSONL:
-#   user.message        → data.content
-#   assistant.message   → data.content + data.reasoningText + data.toolRequests[]
-#   tool.execution_start → data.arguments (tool call parameters)
-#   tool.execution_complete — only has a success flag, no output text in this format
+#   1. `message.usage` — the provider's OWN per-turn counts, which Claude Code
+#      writes verbatim into the transcript. Authoritative, and already inclusive of
+#      the system prompt and injected tool schemas (they are part of the cached
+#      input). Recorded in full as `token_usage`
+#      {input, output, cache_read, cache_write}.
+#
+#      `token_estimate` — the number the ceiling is enforced on — is
+#      input + cache_write + output. cache_read is deliberately EXCLUDED: re-reading
+#      an already-cached context is the cheap part, and counting it makes the figure
+#      grow with run length rather than with work actually done.
+#
+#   2. chars/4 over the raw transcript text — fallback for a surface whose
+#      transcript carries no usage block. 1 token ≈ 4 characters. UNDERCOUNTS: it
+#      cannot see the hidden system prompt, injected tool schemas, or cached tokens.
+#
+# Transcript schemas differ by surface and BOTH are read (source 2):
+#   Claude Code: .type "user"/"assistant"      → .message.content
+#   other:       .type "user.message"          → .data.content
+#                .type "assistant.message"     → .data.content + .data.reasoningText
+#                                                + .data.toolRequests[]
+#                .type "tool.execution_start"  → .data.arguments
+# Reading only one schema yields 0 chars, which silently disables the ceiling below
+# (0 never exceeds it) — so a parser change here is a safety regression, not a
+# cosmetic one.
+#
+# NOTE ON CEILINGS: a TRACK_MAX_TOKEN_ESTIMATE calibrated against the old chars/4
+# figure is too low for the authoritative counts, which are several times larger
+# because they include the cached system prompt and schemas. Re-tune it on a known-
+# good run rather than inheriting the old value.
 #
 # CEILING ENFORCEMENT (TRACK_MAX_TOKEN_ESTIMATE):
 #   TRACK_MAX_TOKEN_ESTIMATE sets a hard ceiling on estimated tokens. When the estimate
@@ -108,25 +123,73 @@ esac
 rec="$RUNS_DIR/$RUN_ID.json"
 [ -f "$rec" ] || exit 0  # run record must already exist (preflight --persist creates it)
 
-# Extract all text the model sent or received. jq outputs one string per match;
-# wc -c counts the raw byte count (close enough to chars for UTF-8 English/code).
-chars="$(jq -r '
-  if   .type == "user.message"         then (.data.content // "")
-  elif .type == "assistant.message"    then (
-    (.data.content // ""),
-    (.data.reasoningText // ""),
-    (.data.toolRequests[]? | tojson)
-  )
-  elif .type == "tool.execution_start" then (.data.arguments | tojson)
-  else empty
-  end
-' "$tp" 2>/dev/null | wc -c)"
+# --- source 1 (preferred): the provider's own usage numbers ------------------
+# Claude Code records per-turn `message.usage` straight from the API. Those counts
+# are authoritative and — unlike the heuristic below — already include the system
+# prompt and injected tool schemas, because those live in the (cached) input.
+# Summing across turns gives the run total: each turn's input_tokens is that call's
+# full context, so the sum is "tokens processed", not "final context size".
+usage="$(jq -s '
+  [ .[] | select(.message.usage != null) | .message.usage ] as $u
+  | if ($u | length) == 0 then empty
+    else {
+      input:       ([ $u[].input_tokens                 // 0 ] | add),
+      output:      ([ $u[].output_tokens                // 0 ] | add),
+      cache_read:  ([ $u[].cache_read_input_tokens      // 0 ] | add),
+      cache_write: ([ $u[].cache_creation_input_tokens  // 0 ] | add)
+    }
+    end' "$tp" 2>/dev/null || true)"
 
-# 1 token ≈ 4 chars. Integer division is intentional — the result is approximate.
-estimate=$(( chars / 4 ))
+chars=0
+if [ -n "$usage" ] && [ "$usage" != "null" ]; then
+  # The ceiling is enforced on NEW tokens (input + cache writes + output) and
+  # deliberately excludes cache_read: re-reading a cached context is the cheap
+  # part, and including it makes the number balloon with run length rather than
+  # with actual work. The full breakdown is recorded either way.
+  estimate="$(jq -r '.input + .cache_write + .output' <<<"$usage")"
+  method="transcript message.usage (authoritative; new tokens = input + cache_write + output, excludes cache_read)"
+else
+  # --- source 2 (fallback): character heuristic over the raw transcript ------
+  # Used when the transcript carries no usage block. Both transcript schemas are
+  # read: Claude Code nests text under .message.content with a bare .type of
+  # "user"/"assistant"; other surfaces use a dotted .type plus a .data payload.
+  # Reading only one of the two silently yields 0 — which then disables the
+  # ceiling below, since 0 never exceeds it.
+  chars="$(jq -r '
+    if   .type == "user" or .type == "assistant" then
+      (.message.content | if type == "string" then . else (.[]? | tojson) end)
+    elif .type == "user.message"         then (.data.content // "")
+    elif .type == "assistant.message"    then (
+      (.data.content // ""),
+      (.data.reasoningText // ""),
+      (.data.toolRequests[]? | tojson)
+    )
+    elif .type == "tool.execution_start" then (.data.arguments | tojson)
+    else empty
+    end
+  ' "$tp" 2>/dev/null | wc -c)"
+  chars="$(printf '%s' "$chars" | tr -d '[:space:]')"
+  # 1 token ≈ 4 chars. Integer division is intentional — the result is approximate.
+  estimate=$(( chars / 4 ))
+  method="chars/4 heuristic — undercounts system prompt + injected schemas + cached tokens"
+fi
 
 ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-tmp="$(mktemp)"
+
+# Every write records the same shape; `extra` appends any status mutation. The
+# method string and the usage breakdown live in ONE place so the three exit paths
+# below cannot drift apart.
+write_estimate() { # write_estimate [extra-jq-filter]
+  _tmp="$(mktemp)"
+  jq --argjson e "$estimate" --argjson c "${chars:-0}" --arg t "$ts" \
+     --arg m "$method" --argjson u "${usage:-null}" \
+    ".token_estimate = \$e
+     | .token_estimate_chars = \$c
+     | .token_estimate_method = \$m
+     | .token_usage = \$u
+     | .last_ts = \$t${1:+ | $1}" \
+    "$rec" >"$_tmp" && mv "$_tmp" "$rec" || rm -f "$_tmp"
+}
 
 # --- ceiling check (first exceedance: block stop; second: allow clean exit) --
 ceiling="${TRACK_MAX_TOKEN_ESTIMATE:-0}"
@@ -134,17 +197,11 @@ if [ "$ceiling" -gt 0 ] && [ "$estimate" -gt "$ceiling" ]; then
   current_status="$(jq -r '.status // empty' "$rec" 2>/dev/null || true)"
   if [ "$current_status" = "budget-exceeded" ]; then
     # Second stop attempt after budget-exceeded was written — record and exit 0.
-    jq --argjson e "$estimate" --argjson c "$chars" --arg t "$ts" \
-       --arg m "chars/4 heuristic — undercounts system prompt + injected schemas + cached tokens" \
-      '.token_estimate = $e | .token_estimate_chars = $c | .token_estimate_method = $m | .last_ts = $t' \
-      "$rec" >"$tmp" && mv "$tmp" "$rec"
+    write_estimate
     exit 0
   fi
   # First exceedance: write terminal state and block this stop.
-  jq --argjson e "$estimate" --argjson c "$chars" --arg t "$ts" \
-     --arg m "chars/4 heuristic — undercounts system prompt + injected schemas + cached tokens" \
-    '.token_estimate = $e | .token_estimate_chars = $c | .token_estimate_method = $m | .last_ts = $t | .status = "budget-exceeded"' \
-    "$rec" >"$tmp" && mv "$tmp" "$rec"
+  write_estimate '.status = "budget-exceeded"'
   printf '%s\n' \
     "TRACK_TOKENS: TOKEN BUDGET EXCEEDED — estimated ~${estimate} tokens (ceiling: ${ceiling})." \
     "  Run record status set to 'budget-exceeded'." \
@@ -156,11 +213,5 @@ fi
 # --- normal recording (under budget or no ceiling) ---------------------------
 # OVERWRITE (not add) — transcript is cumulative so each Stop already gives the
 # running grand total. Adding would double-count earlier turns.
-jq --argjson e "$estimate" --argjson c "$chars" --arg t "$ts" \
-   --arg m "chars/4 heuristic — undercounts system prompt + injected schemas + cached tokens" \
-  '.token_estimate = $e
-   | .token_estimate_chars = $c
-   | .token_estimate_method = $m
-   | .last_ts = $t' \
-  "$rec" >"$tmp" && mv "$tmp" "$rec"
+write_estimate
 exit 0

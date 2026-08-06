@@ -277,7 +277,7 @@ if [ "$mode" = "persist" ]; then
   if [ -f "$rec_dispatch" ]; then
     printf '%s\n' "preflight: breadcrumb already present ($rec_dispatch) — no-op." >&2
   else
-    jq -nc \
+    jq -n \
       --arg run_id "$run_id" --arg track "$track" --arg tasks "$tasks" \
       --arg branch "$branch" --arg base "$base" \
       --arg created "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \

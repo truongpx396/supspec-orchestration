@@ -227,7 +227,7 @@ Scripts are listed in the order they typically fire across a track's lifetime:
 | `track-sentinel.sh` *(repo-policy)* | `Stop` | **Scope & guard** | 🔒 Scan staged diff for likely secrets / debug leftovers before handoff |
 | `track-audit.sh` *(per-track)* | skill-invoked (before PR) + `Stop` *(opt-in)* | **Evidence & quality** | 🔎 Re-derive the **discipline** invariants from artifacts: isolation, reconcile, governance ordering + coverage, phase advance, real RED-before-green, convergence, test weakening. Verdicts + remediation land in the PR body; prints what it *cannot* check |
 | `track-evidence-gate.sh` *(repo-policy)* | `Stop` | **Evidence & quality** | 🚦 Block stop unless evidence is present, **fresh** (fingerprint matches tree), and passing |
-| `track-tokens.sh` *(repo-policy)* | `Stop` | **Governance** | 🪙 Estimate token usage; enforce `TRACK_MAX_TOKEN_ESTIMATE` ceiling (blocks stop + writes `status=budget-exceeded`) |
+| `track-tokens.sh` *(repo-policy)* | `Stop` | **Governance** | 🪙 Record token usage — the provider's own `message.usage` when the transcript carries it, else a chars÷4 estimate — and enforce the `TRACK_MAX_TOKEN_ESTIMATE` ceiling (blocks stop + writes `status=budget-exceeded`) |
 | `track-notify.sh` *(repo-policy)* | `Stop` | **Lifecycle** | 📣 Best-effort completion webhook |
 | `track-report.sh` *(per-track)* | skill-invoked (Step 8) | **Observability** | 📄 Render deterministic PR-body Auto block (diff, evidence, tool calls, trace) |
 | `track-wave-preflight.sh` *(EPT-only)* | skill-invoked (EPT Step 1 + 7) | **Lifecycle** | 🌊 Mint/recover wave dispatch breadcrumb; derive per-track `RUN_ID`s as `<wave-id>_<track-id>`; close wave at Step 7 |
@@ -241,9 +241,25 @@ Everything a run records lands in `runs/<RUN_ID>.json` (gitignored). Full docume
 Evidence is what separates "the agent claimed it worked" from "the agent proved it worked." Every run must pass the evidence gate before it can open a PR.
 
 **How it works:**
-1. `track-evidence.sh` captures test command output + a SHA fingerprint of the working tree at capture time.
-2. `track-evidence-gate.sh` at `Stop` checks: evidence present? fingerprint matches the current tree? all kinds passing?
-3. If the tree changed after capture (stale fingerprint) or evidence is missing → the gate blocks the agent from stopping.
+1. `track-evidence.sh` captures test command output, a SHA fingerprint of the working tree at capture
+   time, and a **verdict** (`pass`/`fail`) with the signal that decided it.
+2. `track-evidence-gate.sh` at `Stop` checks: evidence present? fingerprint matches the current tree?
+   all kinds passing?
+3. If the tree changed after capture (stale fingerprint) or evidence is missing → the gate blocks the
+   agent from stopping.
+
+Three properties do the real work here, and each exists because its absence was exploitable:
+
+- **A command must *run* a test, not *mention* one.** Patterns are matched against the command with
+  heredoc bodies and quoted literals stripped. Writing a PR body that quotes `go test ./...` in its own
+  evidence table used to register as a passing `go-test` capture — the report certifying itself.
+- **The verdict is settled once, at capture.** It reads an exit code where the surface reports one,
+  then a non-zero-exit marker, and only then falls back to scanning output text. The gate and the PR
+  body both read that recorded verdict instead of each re-grepping with their own pattern — they used
+  to ship *different* default patterns and could grade the same capture differently.
+- **The fingerprint follows the worktree**, resolved from the branch in the run's breadcrumb — not the
+  hook's working directory, which is the main checkout even while the agent edits a linked worktree.
+  Fingerprinting the wrong tree makes every capture agree trivially, which reads as convergence.
 
 **Stack-aware defaults.** `install-hooks.sh --apply` detects repo signals and seeds `track-env.base.sh` with opinionated starting points. Signals marked *(auto)* are detected by the installer; others must be added manually to `TRACK_EVIDENCE_KINDS` and `TRACK_EVIDENCE_RULES`:
 
@@ -264,9 +280,11 @@ These are **additive and fully modifiable** — edit `TRACK_EVIDENCE_KINDS` and 
 
 ## 🧾 Discipline audit
 
-The evidence gate proves the tests *passed*. It cannot prove the run was **disciplined** — that governance was read before the first subagent, that the RED suite was actually red, that the reviewer was a different agent than the maker, that the phases advanced at all. `track-audit.sh` closes that gap: it re-derives each pipeline invariant from **durable artifacts only** (the run record + governance bundle + `git diff`), never from the model's account of itself. Run it by hand any time, and always at the draft-PR boundary before `gh pr create`.
+The evidence gate proves the tests *passed*. It cannot prove the run was **disciplined** — that governance was read before the first subagent, that the RED suite was actually red, that the reviewer was a different agent than the maker, that the phases advanced at all. `track-audit.sh` closes that gap: it re-derives each pipeline invariant from **durable artifacts** (the run record + governance bundle + `git diff`) rather than from the model's narrative. Run it by hand any time, and always at the draft-PR boundary before `gh pr create`.
 
-**Four verdicts, and an honesty rule.** Every check is derived from an artifact; anything that cannot be is printed under `MANUAL` rather than faked as a PASS — *a green audit that quietly skipped the hard half is worse than no audit.*
+**Four verdicts, and an honesty rule.** Anything that cannot be derived is printed under `MANUAL` rather than faked as a PASS — *a green audit that quietly skipped the hard half is worse than no audit.*
+
+**Not every check is equally strong, and the audit says which is which.** The artifacts are durable, but they are not all *un-authored*: `trace[]`, `evidence[]`, `compactions[]` and `governance_reads[]` are written by hooks and the model cannot forge them, while `phase`/`phase_log`, `status` and `governance_bundle` are stamps the model writes about itself via `track-note.sh`. Checks resting on the latter detect an **omitted** step, not a **misreported** one — `G3` in particular compares a model-written timestamp against hook-written `trace[]`, so its verdict now states whether a hook-observed bundle read corroborated the ordering. `track-report.sh` reproduces that breakdown in the PR body, because a check advertised as artifact-derived while resting on a self-reported field launders a claim into a fact.
 
 | Verdict | Meaning | Effect |
 |---|---|---|
@@ -281,7 +299,7 @@ The evidence gate proves the tests *passed*. It cannot prove the run was **disci
 |---|---|---|
 | **Governance** | `G1` | A governance bundle was pinned, is present on disk, and is unchanged since it was pinned |
 | | `G2` | The bundle mentions every `.github/instructions/*` file whose `applyTo` glob matches the diff |
-| | `G3` | Governance was stamped **before** the first subagent dispatch (a brief built earlier carried no constraints) |
+| | `G3` | Governance was stamped **before** the first subagent dispatch (a brief built earlier carried no constraints) — *mixed provenance: the stamp is model-written, the dispatch time is hook-written, so the verdict names whether a hook-observed bundle read corroborated it* |
 | | `G4` | A diff touching a trust boundary (auth, secrets, migrations, Dockerfile…) pulled in `security-and-owasp` |
 | **Isolation & resume** | `I1` | Work is **not** on the default branch — a linked worktree is the expected form |
 | | `I2` | Work landed on the branch confirmed at preflight (approved plan ≠ actual work is surfaced) |
@@ -356,9 +374,13 @@ EPT-dispatched track (Flow 4) — `RUN_ID` carries the wave prefix, derived by `
   "run_id": "2026-06-26T14-03_us1",
   "track": "us1",
   "status": "success",
-  "evidence": { "go-test": "42 passed", "ts": "0 errors" },
+  "evidence": [
+    { "t": "…", "kind": "go-test", "cmd": "go test ./...", "response": "ok  42 passed",
+      "fingerprint": "a1b2c3…", "verdict": "pass", "verdict_by": "no-failure-signal" }
+  ],
   "tool_calls": 137,
-  "token_estimate": 48000,
+  "token_estimate": 550991,
+  "token_usage": { "input": 254, "output": 112398, "cache_read": 11117102, "cache_write": 438339 },
   "trace": [
     { "t": "…", "kind": "subagent", "event": "start", "agent_id": "sub-01", "agent_type": "implementer", "reason": "green T038 impl" },
     { "t": "…", "kind": "subagent", "event": "stop",  "agent_id": "sub-01", "agent_type": "implementer", "stop_reason": "done" }
@@ -599,7 +621,7 @@ Key env vars (set in `track-env.base.sh` unless noted):
 | `TRACK_FROZEN_PATHS` | `""` | Space-separated exact files no worker may edit |
 | `TRACK_IMMUTABLE_PREFIXES` | `migrations/` | Committed files here are append-only |
 | `TRACK_GUARD_DESTRUCTIVE` | `1` | Deny irreversible shell/DB ops (rm -rf, data-wipe commands) |
-| `TRACK_ALLOW_FF_PUSH` | `""` | Set to `1` only for `pr-review-feedback` (update existing PR branch) |
+| `TRACK_ALLOW_FF_PUSH` | `""` | Set to `1` only for `pr-review-feedback` (update an **already-published** PR branch). Not needed to open the first PR: the guard allows a worker to publish its own branch **once**, because `gh pr create` cannot open a PR for a branch the remote has never seen. Every other push — the base branch, another branch, a refspec redirect, `--force`/`--delete`/`--all`/`--tags`, or a second push of the same branch — stays denied. |
 
 **Evidence & quality** *(repo-policy; EVIDENCE_RULES/KINDS are additive — edit, don't replace)*
 
@@ -632,7 +654,7 @@ Example value: `*.go:go-test;*.py:py;*.tsx:ts;*.ts:ts;migrations/*:pg-explain`
 | `RUN_ID` | minted by preflight | Stable identifier threading branch ↔ PR ↔ commit trailer ↔ run record |
 | `RUNS_DIR` | `runs` | Directory for run records — must be gitignored |
 | `TRACK_MAX_TOOL_CALLS` | `200` | Hard ceiling on tool calls; run halts when reached |
-| `TRACK_MAX_TOKEN_ESTIMATE` | `200000` | Token-estimate ceiling; blocks stop + writes `status=budget-exceeded` when exceeded. Set to `0` to disable. |
+| `TRACK_MAX_TOKEN_ESTIMATE` | `800000` | Token ceiling; blocks stop + writes `status=budget-exceeded` when exceeded. Set to `0` to disable. Counts `input + cache_write + output` from the transcript's own `message.usage` (cache re-reads excluded), falling back to a chars÷4 heuristic on surfaces that record no usage. **Re-tune on a known-good run** — a value carried over from the old heuristic-only estimate trips far too early, since the real counts include the cached system prompt and tool schemas. |
 | `TRACK_SENTINEL` | `1` | Scan staged diff for likely secrets/debug leftovers at Stop |
 | `TRACK_NOTIFY_WEBHOOK` | `""` | URL for best-effort completion webhook; empty = no notify |
 | `PREFLIGHT_REQUIRE_GH` | `1` | Require authenticated `gh` CLI at preflight (set `0` on bootstraps without a remote) |
@@ -662,7 +684,7 @@ The skills and the hook bundle run under **both** GitHub Copilot agents and **Cl
 `track-*.sh` scripts are surface-agnostic — they already speak Claude Code's hook JSON (`tool_name`,
 snake_case `tool_input.file_path` / `tool_input.command`, `hook_event_name`, `stop_hook_active`,
 `transcript_path`) and emit Claude Code's decisions (`permissionDecision:"deny"` on `PreToolUse`,
-`{decision:"block"}` / `{continue:false}` on `Stop`). Only two things differ per surface:
+`{decision:"block"}` / `{continue:false}` on `Stop`). Only the wiring differs per surface:
 
 | | Copilot | Claude Code |
 |---|---|---|
@@ -670,7 +692,11 @@ snake_case `tool_input.file_path` / `tool_input.command`, `hook_event_name`, `st
 | **Hook wiring** | `.github/hooks/track-hooks.json` | `.claude/settings.json` (`hooks` block) |
 | **Install** | `install-hooks.sh --surface copilot` | `install-hooks.sh --surface claude` |
 | **Governance files** | `.github/instructions/*` auto-injected by `applyTo` | read in-session by the skill's Step 4 (no auto-inject needed) |
-| **Subagent trace** | `SubagentStart` + `SubagentStop` (spawn reason recorded) | `SubagentStop` only (count + heartbeat; no spawn reason) |
+
+Subagent tracing is **not** a per-surface difference: both wire `SubagentStart` + `SubagentStop`, so
+the spawn reason (`agent_description`) is recorded on either. It was listed here as Claude-Code-only
+degraded — "`SubagentStop` only, no spawn reason" — on the mistaken belief that Claude Code had no
+`SubagentStart` event. It does, and the template now wires it.
 
 **Claude Code setup in one paragraph:** install the [Superpowers](https://github.com/obra/superpowers)
 skills for Claude Code (as a plugin or under `.claude/skills/`) so the referenced skills
@@ -689,7 +715,7 @@ bash .github/skills/executing-parallel-tracks/tests/test-skill.sh
 ```
 
 The test harnesses are a **documentation-contract fence + functional regression suite** in one:
-- **226 SBD tests** cover: preflight flag behavior (`--persist`, `--complete`, breadcrumb stamping), guard allow/deny decisions (scope, frozen paths, destructive ops, FF-push gating), evidence capture + gate (fingerprint freshness, stale detection, multi-kind), meter counting + hard-stop, trace schema, compaction/governance-read recording, audit invariants, sentinel pattern matching, dependency version-lock + probe cache (`skill-deps.json`, TTL caching, lock violations), report Auto-block rendering, run-record field completeness, token ceiling enforcement (`TRACK_MAX_TOKEN_ESTIMATE`), and structural checks on SKILL.md / hooks.md / templates.
+- **251 SBD tests** cover: preflight flag behavior (`--persist`, `--complete`, breadcrumb stamping), guard allow/deny decisions (scope, frozen paths, destructive ops, FF-push gating, first-publish carve-out boundaries), evidence capture + gate (fingerprint freshness, stale detection, multi-kind, worktree-relative fingerprinting, verdict from exit code, and rejection of test commands that are merely quoted or heredoc'd rather than run), meter counting + hard-stop, trace schema, compaction/governance-read recording, audit invariants (including `G3` provenance disclosure and `G4` both directions), sentinel pattern matching, dependency version-lock + probe cache (`skill-deps.json`, TTL caching, lock violations), report Auto-block rendering, run-record field completeness, token ceiling enforcement across both transcript schemas and provider usage data (`TRACK_MAX_TOKEN_ESTIMATE`), and structural checks on SKILL.md / hooks.md / templates.
 - **205 EPT tests** cover: SKILL.md structural integrity (Steps 0–7, gates, wave planner), manifest template completeness, run-record schema (trace[]/ skills[] separation), precheck ownership-overlap detection (disjoint / overlapping / shared hotspot / 3-way), and structural governance assertions.
 
 Both suites run on every push/PR via [`.github/workflows/skill-tests.yml`](.github/workflows/skill-tests.yml).

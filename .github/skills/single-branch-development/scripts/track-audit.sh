@@ -237,24 +237,39 @@ else
 fi
 
 # G3 — was governance stamped BEFORE the first subagent was dispatched?
-# A brief built before discovery is a brief with no constraints in it. Both timestamps
-# are durable, so this ordering is a fact, not an inference.
+# A brief built before discovery is a brief with no constraints in it.
+#
+# ONLY ONE SIDE OF THIS COMPARISON IS HOOK-OBSERVED. `trace[]` is written by
+# track-trace.sh and the model cannot author it, but `governance_bundle.t` is written by
+# the model via track-note.sh and carries `self_reported: true`. Lowering it satisfies G3
+# unconditionally — and on a real run a worker did edit that stamp and reported G3 as
+# having confirmed the ordering. The verdict now names which side supported it, because a
+# check advertised as artifact-derived while resting on a model-written field is worse
+# than no check: it launders a claim into a fact.
+#
+# governance_reads[] IS hook-observed (track-compact.sh, PostToolUse), so a read of the
+# pinned bundle before the first dispatch is real corroboration. It is not always present
+# — it only fires once a bundle is pinned and a later tool call names it — so its absence
+# downgrades the wording, never the verdict.
 first_sub_t="$(j "[.trace[]? | $SUBAGENT_SEL | .t] | sort | first // \"\"")"
 gov_t="$(j '.governance_bundle.t // ""')"
 gov_phase_t="$(j '[.phase_log[]? | select(.step | test("governance"; "i")) | .t] | first // ""')"
 [ -n "$gov_phase_t" ] && [ -z "$gov_t" ] && gov_t="$gov_phase_t"
 [ -n "$gov_phase_t" ] && [ -n "$gov_t" ] && [ "$gov_phase_t" \< "$gov_t" ] && gov_t="$gov_phase_t"
+gov_read_t="$(j '[.governance_reads[]?.t] | sort | first // ""')"
 if [ -z "$first_sub_t" ]; then
   add G3 WARN "no subagent activity in trace[] — either none was dispatched, or the trace hook is not wired"
 elif [ -z "$gov_t" ]; then
   add G3 FAIL "subagents were dispatched but governance was never stamped — briefs cannot have carried the bundle"
 elif [ "$gov_t" \> "$first_sub_t" ]; then
   add G3 FAIL "first subagent dispatched at $first_sub_t, BEFORE governance was stamped at $gov_t"
+elif [ -n "$gov_read_t" ] && [ ! "$gov_read_t" \> "$first_sub_t" ]; then
+  add G3 PASS "governance stamped no later than the first subagent dispatch, corroborated by a hook-observed bundle read at $gov_read_t"
 else
   # Equal timestamps PASS deliberately. These stamps have one-second resolution, and a run
   # that pins the bundle and then dispatches immediately lands in the same second routinely
   # — testing for strict "earlier" would fail exactly the runs that did it fastest.
-  add G3 PASS "governance stamped no later than the first subagent dispatch"
+  add G3 PASS "governance stamped no later than the first subagent dispatch — on the model's own stamp, with no hook-observed bundle read before that dispatch to corroborate it"
 fi
 
 # G4 — trust-boundary surface must pull in the security instructions.
