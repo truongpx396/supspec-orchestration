@@ -196,7 +196,7 @@ Every top-level skill file (`SKILL.md`) follows a consistent section spine, so y
 | `## Pipeline` | Numbered steps, exactly what happens in order (SBD: `One Branch`, EPT: `N Tracks`) |
 | `## Skill-Per-Step Map` | Table: step → what fires → kind (🧩 skill / 🤖 subagent / ⚙️ script) |
 | `## Quality Gates (Owned Here)` | Invariants this skill asserts — governance, TDD, maker/checker, evidence |
-| `## Hooks` | The mechanical bundle: which scripts fire, owned (SBD) vs reused (EPT/PRF) |
+| `## Hooks` *(SBD: `## Hooks (Optional, Composable) — Bundle Owned Here`; PRF: `## Hooks (Reused, Not Owned)`; EPT: `## Deterministic enforcement via agent hooks`)* | The mechanical bundle: which scripts fire. SBD owns the canonical bundle; PRF reuses it unchanged; EPT reuses it **and** adds two orchestrator-only scripts (`track-wave-preflight.sh`, `track-precheck.sh`) |
 | `## Gotchas` | Known footguns with mitigations |
 | `## References` | Links to deep-dive docs and related skills |
 
