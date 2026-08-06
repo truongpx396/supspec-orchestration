@@ -1,5 +1,6 @@
 ---
 name: executing-parallel-tracks
+version: 0.1.0
 description: 'Orchestrate multiple independent implementation tracks in parallel, each in its own
 git worktree, fully autonomously from implement through review, verification, and pull request.
 Use when asked to "run tracks in parallel", "execute track 1, 2, 3", "spawn parallel agents",
