@@ -1,4 +1,4 @@
-# Test Report — executing-parallel-tracks Skill
+# Test Report — sso-executing-parallel-tracks Skill
 
 > **Historical snapshot — not the current result.** This report records one manual run, on
 > 2026-07-04, in a *different* repo (`aisat-studio`), at 188 assertions. The suite is now **205
@@ -19,7 +19,7 @@
 ## Summary
 
 All structural, behavioural, and extreme-parallel quality-gates for the
-`executing-parallel-tracks` skill were exercised across **27 test suites**
+`sso-executing-parallel-tracks` skill were exercised across **27 test suites**
 (188 assertions total). Zero skips; the ephemeral temp-git approach means every
 assertion runs without needing a committed branch.
 
@@ -85,7 +85,7 @@ guard enforces, so the precheck asserts on exactly what the workers will run.
 | # | Test | Result |
 |---|------|--------|
 | 1 | SKILL.md exists | ✅ PASS |
-| 2 | frontmatter name=executing-parallel-tracks | ✅ PASS |
+| 2 | frontmatter name=sso-executing-parallel-tracks | ✅ PASS |
 | 3 | Steps 1-7 all present | ✅ PASS |
 | 4 | Steps appear in ascending line order | ✅ PASS |
 | 5 | 3 mandatory gates stated | ✅ PASS |

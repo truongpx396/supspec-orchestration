@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # track-deps.sh — Dependency version-lock verifier + TTL cache for the
-# single-branch-development bundle. Solves two footguns at once:
+# sso-single-branch-development bundle. Solves two footguns at once:
 #
 #   1. VERSION DRIFT (the lock). A repo pins the versions of the external tools this
 #      skill leans on (git, jq, and optionally superpowers/speckit/go/uv/node) in a

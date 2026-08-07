@@ -52,7 +52,7 @@ that must hold ("do not edit frozen entrypoints; do not delete existing tests"),
 
 **Run record (one per track, git-ignored `runs/` dir).** Each worker writes/updates
 `runs/<run-id>.json` — the trace anchor and the orchestrator's memory between ticks.
-The record uses the **same two-array schema** as `single-branch-development`:
+The record uses the **same two-array schema** as `sso-single-branch-development`:
 `trace[]` = hook-observed SubagentStart/Stop (mechanical); `skills[]` = self-reported skill
 activations (model's claim, provenance-tagged). Never mix them.
 ```json

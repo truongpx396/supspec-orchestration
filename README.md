@@ -47,9 +47,9 @@ graph TD
         S1["specify → clarify → plan → tasks → analyze"]
     end
     subgraph SO ["🔀 supspec-orchestration — this repo"]
-        B1["single-branch-development  · one branch / track"]
-        B2["executing-parallel-tracks  · N tracks, conductor"]
-        B3["pr-review-feedback  · rework existing PR"]
+        B1["sso-single-branch-development  · one branch / track"]
+        B2["sso-executing-parallel-tracks  · N tracks, conductor"]
+        B3["sso-pr-review-feedback  · rework existing PR"]
     end
     C["👤 human reviews → merge queue"]
     SK -->|tasks.md| SO
@@ -64,7 +64,7 @@ Before using these skills in your repo:
 
 1. **[SpecKit](https://github.com/github/spec-kit)** installed and a `tasks.md` generated (or equivalent task list).
 2. **[Superpowers](https://github.com/obra/superpowers)** skills catalog installed and discoverable by your agent — under `.github/skills/` for Copilot, or under `.claude/skills/` (project) / as the Superpowers plugin for **Claude Code** (see [Runs on Copilot and Claude Code](#runs-on-copilot-and-claude-code)).
-3. A Parallel Tracks Orchestrator Manifest at `.github/tracks/manifest.md` for parallel tracks (or let `executing-parallel-tracks` derive one from `tasks.md` and confirm with you at Step 0).
+3. A Parallel Tracks Orchestrator Manifest at `.github/tracks/manifest.md` for parallel tracks (or let `sso-executing-parallel-tracks` derive one from `tasks.md` and confirm with you at Step 0).
 4. `git` with worktree support; `gh` CLI authenticated; `jq` available.
 5. Docker available if any track runs integration suites.
 6. Mechanical gates via lifecycle hooks (optional but recommended — makes scope/evidence gates mechanical rather than prompt-trusted): Copilot [agent hooks](https://docs.github.com/en/copilot/concepts/agents/hooks) in `.github/hooks/`, **or** Claude Code [hooks](https://docs.claude.com/en/docs/claude-code/hooks) in `.claude/settings.json`. Both are installed by the same `install-hooks.sh` — pick the surface with `--surface`.
@@ -85,14 +85,14 @@ Wave 1: [Track A]  [Track B]  [Track C]   ← all parallel, disjoint ownership
 Wave 2: [Track D]  [Track E]             ← parallel, depend on Wave 1
 ```
 
-This is why Step 0 of `executing-parallel-tracks` analyzes dependencies and groups tasks into waves before fanning out any workers.
+This is why Step 0 of `sso-executing-parallel-tracks` analyzes dependencies and groups tasks into waves before fanning out any workers.
 
 ---
 
 ## 🔄 Main flows
 
 ### Flow 1 — Scaffold (non-behavioral bootstrap)
-> **Skill:** `single-branch-development` in **scaffold mode**
+> **Skill:** `sso-single-branch-development` in **scaffold mode**
 ```
 Step 1: track-preflight.sh --persist   🎫 mint RUN_ID, confirm scope
 Step 2: track-reconcile.sh             ♻️ recover durable state (no-op on a fresh run)
@@ -105,7 +105,7 @@ Step 8: track-audit.sh → gh pr --draft 📬 audit invariants, then stop — hu
 ```
 
 ### Flow 2 — Single feature/bugfix (story mode, TDD)
-> **Skill:** `single-branch-development` in **story mode** (N=1 for a single task/bugfix)
+> **Skill:** `sso-single-branch-development` in **story mode** (N=1 for a single task/bugfix)
 ```
 Step 1: track-preflight.sh --persist   🎫 mint RUN_ID, confirm scope
 Step 2: track-reconcile.sh             ♻️ recover durable state (no-op on a fresh run)
@@ -119,7 +119,7 @@ Step 8: track-audit.sh → gh pr --draft 📬 audit invariants, then stop — hu
 ```
 
 ### Flow 3 — Refactor (behavior-preserving, keep-green)
-> **Skill:** `single-branch-development` in **refactor mode**
+> **Skill:** `sso-single-branch-development` in **refactor mode**
 ```
 Step 1: track-preflight.sh --persist   🎫 mint RUN_ID, confirm scope
 Step 2: track-reconcile.sh             ♻️ recover durable state (no-op on a fresh run)
@@ -133,14 +133,14 @@ Step 8: track-audit.sh → gh pr --draft 📬 audit invariants, then stop — hu
 ```
 
 ### Flow 4 — Parallel tracks (N stories at once)
-> **Skill:** `executing-parallel-tracks` — composes `dispatching-parallel-agents` + N× `single-branch-development`
+> **Skill:** `sso-executing-parallel-tracks` — composes `dispatching-parallel-agents` + N× `sso-single-branch-development`
 ```
 Step 0: Analyze & plan waves          📊 derive dependencies, wave plan, CONFIRM
 Step 1: track-wave-preflight.sh       🌊 mint WAVE_ID + per-track RUN_IDs, persist wave dispatch
         track-precheck.sh             🔎 validate manifest + ownership overlap
 Step 2: using-git-worktrees (×N)      🌿 one isolated worktree per track
 Step 3: dispatching-parallel-agents   🪢 fan out N worker agents (each with AUTO_CONFIRM=1)
-  Each agent runs single-branch-development  🔄 full pipeline per track
+  Each agent runs sso-single-branch-development  🔄 full pipeline per track
 Step 4: track-report.sh → gh pr --draft 📬 per-track Auto block + draft PR
 Step 5: integration sequencing        🔀 CI + human / merge queue — PRs ordered by dependency
 Step 6: stale-PR bounce               ♻️ re-dispatch owning worker to rebase
@@ -155,11 +155,11 @@ human reviews N draft PRs → merge queue
 
 | Skill | Role | Use when |
 |---|---|---|
-| 🌿 **[single-branch-development](.github/skills/single-branch-development/SKILL.md)** | Per-branch worker | One feature, bugfix, refactor, or scaffold — end-to-end on a single branch |
-| 🪢 **[executing-parallel-tracks](.github/skills/executing-parallel-tracks/SKILL.md)** | Conductor | N independent tracks concurrently, each in its own worktree |
-| 🔁 **[pr-review-feedback](.github/skills/pr-review-feedback/SKILL.md)** | Rework stage | Address review comments on an **existing** PR branch |
+| 🌿 **[sso-single-branch-development](.github/skills/sso-single-branch-development/SKILL.md)** | Per-branch worker | One feature, bugfix, refactor, or scaffold — end-to-end on a single branch |
+| 🪢 **[sso-executing-parallel-tracks](.github/skills/sso-executing-parallel-tracks/SKILL.md)** | Conductor | N independent tracks concurrently, each in its own worktree |
+| 🔁 **[sso-pr-review-feedback](.github/skills/sso-pr-review-feedback/SKILL.md)** | Rework stage | Address review comments on an **existing** PR branch |
 
-### 🌿 single-branch-development
+### 🌿 sso-single-branch-development
 A thin **per-branch bracket** (isolation before, evidence gate + draft-PR boundary after) around an execution core with **three modes**:
 
 | Mode | What it does | Key superpower used |
@@ -172,12 +172,12 @@ All modes share: `using-git-worktrees` (isolation), `verification-before-complet
 
 > **Governance note.** `requesting-code-review` dispatches a reviewer subagent that automatically inherits any `.github/instructions/*.instructions.md` file whose `applyTo` glob matches the changed files — so `code-review-generic.instructions.md` (`applyTo: '**'`) is always in scope, and language/framework-specific instructions (`go.instructions.md`, `reactjs.instructions.md`, …) apply whenever the diff touches matching paths. No extra wiring needed.
 
-### 🪢 executing-parallel-tracks
-The **conductor**: owns isolation, gates, traceability, and integration sequencing; delegates each track's implement/review/verify to `single-branch-development`. Starts with a dependency-aware wave analysis (Step 0) that derives a wave plan and requires your confirmation before spawning any worker.
+### 🪢 sso-executing-parallel-tracks
+The **conductor**: owns isolation, gates, traceability, and integration sequencing; delegates each track's implement/review/verify to `sso-single-branch-development`. Starts with a dependency-aware wave analysis (Step 0) that derives a wave plan and requires your confirmation before spawning any worker.
 
-Superpowers used: `using-git-worktrees` (per track) → `dispatching-parallel-agents` → `single-branch-development` (×N).
+Superpowers used: `using-git-worktrees` (per track) → `dispatching-parallel-agents` → `sso-single-branch-development` (×N).
 
-### 🔁 pr-review-feedback
+### 🔁 sso-pr-review-feedback
 Turns a batch of PR review comments into applied, evidenced changes on the **existing** PR branch — no preflight-mint, no fresh RED, no new isolate. Reuses the hooks bundle in **resume mode** and closes with a PR update.
 
 Superpowers used: `receiving-code-review` (triage) → 🤖 `dispatching-parallel-agents` (optional, independent fixes) → `requesting-code-review` (re-review fix delta) → `verification-before-completion` (re-evidence).
@@ -232,7 +232,7 @@ Scripts are listed in the order they typically fire across a track's lifetime:
 | `track-report.sh` *(per-track)* | skill-invoked (Step 8) | **Observability** | 📄 Render deterministic PR-body Auto block (diff, evidence, tool calls, trace) |
 | `track-wave-preflight.sh` *(EPT-only)* | skill-invoked (EPT Step 1 + 7) | **Lifecycle** | 🌊 Mint/recover wave dispatch breadcrumb; derive per-track `RUN_ID`s as `<wave-id>_<track-id>`; close wave at Step 7 |
 
-Everything a run records lands in `runs/<RUN_ID>.json` (gitignored). Full documentation: **[references/hooks.md](.github/skills/single-branch-development/references/hooks.md)**.
+Everything a run records lands in `runs/<RUN_ID>.json` (gitignored). Full documentation: **[references/hooks.md](.github/skills/sso-single-branch-development/references/hooks.md)**.
 
 ---
 
@@ -323,7 +323,7 @@ The evidence gate proves the tests *passed*. It cannot prove the run was **disci
 | **CLI** *(default)* | `track-audit.sh` · `--json` · `--warn-only` | Always available; exits 2 on any `FAIL`. Run at the draft-PR boundary |
 | **Hook** *(opt-in)* | `track-audit.sh --hook` | `Stop`-hook gate — only blocks when `TRACK_AUDIT=1`, honors `stop_hook_active` so a blocked stop can still eventually end |
 
-Auditing on every `Stop` by default would break a repo that adopts the hooks but not the governance discipline (it could never end a session) — so the CLI is free and the blocking gate is a choice. Full env + check reference: **[references/hooks.md](.github/skills/single-branch-development/references/hooks.md)**.
+Auditing on every `Stop` by default would break a repo that adopts the hooks but not the governance discipline (it could never end a session) — so the CLI is free and the blocking gate is a choice. Full env + check reference: **[references/hooks.md](.github/skills/sso-single-branch-development/references/hooks.md)**.
 
 ---
 
@@ -333,7 +333,7 @@ Three artifact types are produced across a run. Each is owned by a specific skil
 
 ---
 
-### 🌿 Produced by `single-branch-development` — every flow
+### 🌿 Produced by `sso-single-branch-development` — every flow
 
 **Per-track breadcrumb** (`runs/<RUN_ID>.dispatch`, gitignored). Written by `track-preflight.sh --persist` at Step 1, closed by `--complete` at Step 8. Exists for **every** SBD run — standalone (Flows 1–3) and EPT-dispatched (Flow 4). Enables resume: if the session is interrupted, `track-reconcile.sh` finds this file and rebuilds position without re-minting a new ID.
 
@@ -393,7 +393,7 @@ EPT-dispatched track (Flow 4) — `RUN_ID` carries the wave prefix, derived by `
 
 ---
 
-### 🪢 Produced by `executing-parallel-tracks` — Flow 4 only
+### 🪢 Produced by `sso-executing-parallel-tracks` — Flow 4 only
 
 **Wave dispatch breadcrumb** (`runs/<WAVE_ID>.wave.dispatch`, gitignored). Written by `track-wave-preflight.sh --persist` before fan-out, closed by `--complete` after all tracks finish. **EPT-only** — standalone SBD runs do not produce this file. It is the durable orchestrator resume anchor: if interrupted, the wave's `track_run_ids[]` list is the authoritative source for reconstructing per-track state.
 
@@ -504,24 +504,24 @@ Grep any one surface → reconstruct the whole run. `runs/summary.md` aggregates
     devops-cicd.instructions.md       # Docker, Compose, Makefile, GitHub Actions
     agent-skills.instructions.md      # authoring guidelines for SKILL.md files
   skills/
-    single-branch-development/
+    sso-single-branch-development/
       SKILL.md
       references/                     # governance.md, hooks.md, scaffold/story/refactor-mode.md
       scripts/                        # canonical source for track-*.sh + install-hooks.sh
       templates/                      # track-hooks.json, claude-settings.json, track-env.sh.example, pr-body.md, skill-deps.json
       tests/                          # test-skill.sh self-test harness
-    executing-parallel-tracks/
+    sso-executing-parallel-tracks/
       SKILL.md
       scripts/                        # track-precheck.sh, track-wave-preflight.sh
       tests/
       track-manifest.template.md      # copy to .github/tracks/manifest.md per repo; fill in orchestrator facts
-    pr-review-feedback/
+    sso-pr-review-feedback/
       SKILL.md
 README.md
 .gitignore                            # runs/ and .github/hooks/ (installer-generated)
 ```
 
-> The canonical `track-*.sh` sources live under `single-branch-development/scripts/` (wiring templates under `templates/`). `.github/hooks/` is **generated** by `install-hooks.sh --apply` and is gitignored in this catalog repo — run the installer (or `--check` for drift) instead of committing copies here. In a repo that *uses* these skills, commit the generated `.github/hooks/` so the bundle travels into every worktree.
+> The canonical `track-*.sh` sources live under `sso-single-branch-development/scripts/` (wiring templates under `templates/`). `.github/hooks/` is **generated** by `install-hooks.sh --apply` and is gitignored in this catalog repo — run the installer (or `--check` for drift) instead of committing copies here. In a repo that *uses* these skills, commit the generated `.github/hooks/` so the bundle travels into every worktree.
 
 ---
 
@@ -557,7 +557,9 @@ What `--apply` does, in the target repo:
   surface-specific path;
 - copies the governance `.github/instructions/*` and the `agent-pr-audit.yml` workflow (both surfaces);
 - **fetches the dependency skills**, versions pinned in `skill-deps.json`: `obra/superpowers` is
-  vendored (git clone, Claude surface only) into `.claude/skills/superpowers`; the `speckit-*` skills
+  vendored (git clone, Claude surface only) with its 14 skills copied **flat** into
+  `.claude/skills/` (not nested under a `superpowers/` wrapper — Claude Code only discovers
+  `SKILL.md` exactly one level under `.claude/skills/`); the `speckit-*` skills
   are installed by shelling out to spec-kit's own `specify` CLI (`specify integration install claude`
   or `copilot`, run ephemerally and version-pinned via `uvx` — requires [uv](https://docs.astral.sh/uv/)
   on `PATH`), landing under whichever of `.claude/skills/` / `.github/skills/` the single-copy rule
@@ -588,12 +590,12 @@ Copy the skill directories into the target repo where **your agent discovers ski
   `.claude/skills/**/SKILL.md` too — so if you're setting up both surfaces, one copy under
   `.claude/skills/` covers both and there is no need to duplicate into `.github/skills/`. Preserve
   the tree (the skills cross-reference each other by relative path, e.g.
-  `../executing-parallel-tracks/SKILL.md`):
+  `../sso-executing-parallel-tracks/SKILL.md`):
   ```bash
   mkdir -p .claude/skills
-  cp -R .github/skills/single-branch-development .claude/skills/
-  cp -R .github/skills/executing-parallel-tracks .claude/skills/
-  cp -R .github/skills/pr-review-feedback        .claude/skills/
+  cp -R .github/skills/sso-single-branch-development .claude/skills/
+  cp -R .github/skills/sso-executing-parallel-tracks .claude/skills/
+  cp -R .github/skills/sso-pr-review-feedback        .claude/skills/
   ```
   If you're on a Copilot version that predates cross-directory skill discovery, or your org has it
   disabled, copy `.github/skills/` as-is instead (or in addition).
@@ -603,17 +605,17 @@ wiring differs):
 
 ```bash
 # dry-run: print what would change
-bash .github/skills/single-branch-development/scripts/install-hooks.sh
+bash .github/skills/sso-single-branch-development/scripts/install-hooks.sh
 
 # probe for drift between sources and installed copies
-bash .github/skills/single-branch-development/scripts/install-hooks.sh --check
+bash .github/skills/sso-single-branch-development/scripts/install-hooks.sh --check
 
 # sync bundle + gitignore runs/ + seed track-env.base.sh + wire hooks (default: both surfaces)
-bash .github/skills/single-branch-development/scripts/install-hooks.sh --apply
+bash .github/skills/sso-single-branch-development/scripts/install-hooks.sh --apply
 
 # wire ONLY Claude Code (.claude/settings.json) or ONLY Copilot (.github/hooks/track-hooks.json)
-bash .github/skills/single-branch-development/scripts/install-hooks.sh --apply --surface claude
-bash .github/skills/single-branch-development/scripts/install-hooks.sh --apply --surface copilot
+bash .github/skills/sso-single-branch-development/scripts/install-hooks.sh --apply --surface claude
+bash .github/skills/sso-single-branch-development/scripts/install-hooks.sh --apply --surface copilot
 ```
 
 The installer auto-detects repo signals (`go.mod`, `pyproject.toml`, `package.json`, `migrations/`) and seeds `track-env.base.sh` — repo-policy vars filled in, task-derived scope left empty so an unedited copy **fails loud**.
@@ -635,7 +637,7 @@ Key env vars (set in `track-env.base.sh` unless noted):
 | `TRACK_FROZEN_PATHS` | `""` | Space-separated exact files no worker may edit |
 | `TRACK_IMMUTABLE_PREFIXES` | `migrations/` | Committed files here are append-only |
 | `TRACK_GUARD_DESTRUCTIVE` | `1` | Deny irreversible shell/DB ops (rm -rf, data-wipe commands) |
-| `TRACK_ALLOW_FF_PUSH` | `""` | Set to `1` only for `pr-review-feedback` (update an **already-published** PR branch). Not needed to open the first PR: the guard allows a worker to publish its own branch **once**, because `gh pr create` cannot open a PR for a branch the remote has never seen. Every other push — the base branch, another branch, a refspec redirect, `--force`/`--delete`/`--all`/`--tags`, or a second push of the same branch — stays denied. |
+| `TRACK_ALLOW_FF_PUSH` | `""` | Set to `1` only for `sso-pr-review-feedback` (update an **already-published** PR branch). Not needed to open the first PR: the guard allows a worker to publish its own branch **once**, because `gh pr create` cannot open a PR for a branch the remote has never seen. Every other push — the base branch, another branch, a refspec redirect, `--force`/`--delete`/`--all`/`--tags`, or a second push of the same branch — stays denied. |
 
 **Evidence & quality** *(repo-policy; EVIDENCE_RULES/KINDS are additive — edit, don't replace)*
 
@@ -681,13 +683,13 @@ Example value: `*.go:go-test;*.py:py;*.tsx:ts;*.ts:ts;migrations/*:pg-explain`
 
 ### 3️⃣ Invoke a skill
 Point your agent at the task and let the skill drive. On **Copilot**, reference the skill by name; on
-**Claude Code**, invoke it with `/single-branch-development` (or `/executing-parallel-tracks`) or name
+**Claude Code**, invoke it with `/sso-single-branch-development` (or `/sso-executing-parallel-tracks`) or name
 it in the request — Claude Code loads the matching `SKILL.md`:
 
-- *"implement Phase 1 Setup — shared infrastructure (T001–T010a) **using single-branch-development skill**"* → Flow 1 (scaffold)
-- *"implement Phase 3 User Story 1: Ingest knowledge into a searchable library (T035–T056) **using single-branch-development skill**"* → Flow 2 (story/TDD)
-- *"refactor Phase 2 Foundational — frontend API client (T031) **using single-branch-development skill**"* → Flow 3 (refactor)
-- *"execute Phase 3 US1, Phase 4 US2, Phase 5 US3 in parallel **using executing-parallel-tracks skill**"* → Flow 4 (parallel)
+- *"implement Phase 1 Setup — shared infrastructure (T001–T010a) **using sso-single-branch-development skill**"* → Flow 1 (scaffold)
+- *"implement Phase 3 User Story 1: Ingest knowledge into a searchable library (T035–T056) **using sso-single-branch-development skill**"* → Flow 2 (story/TDD)
+- *"refactor Phase 2 Foundational — frontend API client (T031) **using sso-single-branch-development skill**"* → Flow 3 (refactor)
+- *"execute Phase 3 US1, Phase 4 US2, Phase 5 US3 in parallel **using sso-executing-parallel-tracks skill**"* → Flow 4 (parallel)
 
 The worker stops at `gh pr create --draft`. **A human owns the merge.**
 
@@ -719,14 +721,14 @@ skills for Claude Code (as a plugin or under `.claude/skills/`) so the reference
 `using-git-worktrees`, `verification-before-completion`, …) resolve; copy these three orchestration
 skills into `.claude/skills/` (step 1️⃣ above); then run `install-hooks.sh --apply --surface claude`
 to wire `.claude/settings.json`. See
-[`single-branch-development/references/hooks.md`](.github/skills/single-branch-development/references/hooks.md#running-under-claude-code)
+[`sso-single-branch-development/references/hooks.md`](.github/skills/sso-single-branch-development/references/hooks.md#running-under-claude-code)
 for the full event/matcher mapping and the two Claude Code deltas.
 
 ### 4️⃣ Self-test the bundle
 
 ```bash
-bash .github/skills/single-branch-development/tests/test-skill.sh
-bash .github/skills/executing-parallel-tracks/tests/test-skill.sh
+bash .github/skills/sso-single-branch-development/tests/test-skill.sh
+bash .github/skills/sso-executing-parallel-tracks/tests/test-skill.sh
 ```
 
 The test harnesses are a **documentation-contract fence + functional regression suite** in one:
@@ -752,14 +754,14 @@ Both suites run on every push/PR via [`.github/workflows/skill-tests.yml`](.gith
 
 | File | Purpose |
 |---|---|
-| `.github/skills/single-branch-development/SKILL.md` | SBD skill — full pipeline |
-| `.github/skills/executing-parallel-tracks/SKILL.md` | EPT skill — conductor |
-| `.github/skills/pr-review-feedback/SKILL.md` | PRF skill — rework stage |
-| `.github/skills/single-branch-development/references/hooks.md` | Hook env vars + run-record schema |
+| `.github/skills/sso-single-branch-development/SKILL.md` | SBD skill — full pipeline |
+| `.github/skills/sso-executing-parallel-tracks/SKILL.md` | EPT skill — conductor |
+| `.github/skills/sso-pr-review-feedback/SKILL.md` | PRF skill — rework stage |
+| `.github/skills/sso-single-branch-development/references/hooks.md` | Hook env vars + run-record schema |
 | `.github/hooks/track-env.base.sh` | Committed repo-wide config (edit this) |
 | `.github/hooks/track-hooks.json` | Event → script wiring |
-| `.github/skills/executing-parallel-tracks/track-manifest.template.md` | Orchestrator manifest template (copy to `.github/tracks/manifest.md`) |
-| `.github/skills/executing-parallel-tracks/scripts/track-wave-preflight.sh` | Wave dispatch: mint `WAVE_ID`, derive per-track `RUN_ID`s, close wave |
+| `.github/skills/sso-executing-parallel-tracks/track-manifest.template.md` | Orchestrator manifest template (copy to `.github/tracks/manifest.md`) |
+| `.github/skills/sso-executing-parallel-tracks/scripts/track-wave-preflight.sh` | Wave dispatch: mint `WAVE_ID`, derive per-track `RUN_ID`s, close wave |
 
 ---
 

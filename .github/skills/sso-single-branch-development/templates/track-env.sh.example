@@ -1,4 +1,4 @@
-# track-env — hook preset for the single-branch-development bundle.
+# track-env — hook preset for the sso-single-branch-development bundle.
 #
 # TWO LAYERS (both optional, both live in .github/hooks/ next to the scripts):
 #   * track-env.base.sh  — COMMITTED, repo-wide defaults shared across every
@@ -20,7 +20,7 @@
 # PRECEDENCE (most specific wins; every line uses `${VAR:-default}`)
 #   exported env  >  track-env.sh (worktree)  >  track-env.base.sh (repo)  >  script default
 #   Each hook sources local first, then base, so a worktree value wins over the
-#   repo base, and an already-exported value (e.g. an executing-parallel-tracks
+#   repo base, and an already-exported value (e.g. an sso-executing-parallel-tracks
 #   per-track override) wins over both — no file edit needed. To make a value
 #   authoritative, drop the `${VAR:-...}` wrapper and assign it directly.
 #

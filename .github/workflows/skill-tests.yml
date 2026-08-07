@@ -32,11 +32,11 @@ jobs:
           git config user.email "skill-tests@ci.local"
           git config user.name  "skill-tests"
 
-      - name: single-branch-development suite
-        run: bash .github/skills/single-branch-development/tests/test-skill.sh
+      - name: sso-single-branch-development suite
+        run: bash .github/skills/sso-single-branch-development/tests/test-skill.sh
 
-      - name: executing-parallel-tracks suite
-        run: bash .github/skills/executing-parallel-tracks/tests/test-skill.sh
+      - name: sso-executing-parallel-tracks suite
+        run: bash .github/skills/sso-executing-parallel-tracks/tests/test-skill.sh
 
       - name: Hook scripts parse cleanly
         # `bash -n` catches a syntax error that a suite might not reach — a hook that

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# install-hooks.sh — Idempotent, consent-gated installer for the single-branch-development
+# install-hooks.sh — Idempotent, consent-gated installer for the sso-single-branch-development
 # hooks bundle. Solves the "install once, silently drift" footgun: manual `cp` copies rot
 # (a repo can run a months-stale bundle without noticing), forgets to gitignore runs/, and
 # skips the committed track-env.base.sh preset — so a resume runs SILENTLY UNGATED.
@@ -191,7 +191,7 @@ render_base_env() {
   base_ref="$(printf '%s' "$fields" | cut -f4)"
   descriptor="$(repo_descriptor)"
   cat <<EOF
-# track-env.base.sh — repo-wide COMMITTED hook preset (single-branch-development bundle).
+# track-env.base.sh — repo-wide COMMITTED hook preset (sso-single-branch-development bundle).
 # Auto-seeded by install-hooks.sh from the detected repo stack. SAFE TO EDIT + COMMIT.
 #
 # Context this was generated for: $descriptor
@@ -308,7 +308,7 @@ say ""
 if [ "$runs_ignored" -eq 0 ]; then
   say "2. Gitignore '$RUNS_DIR_NAME/': not ignored (fingerprint will self-stale)."
   if act; then
-    printf '\n# single-branch-development run records (self-stale the evidence fingerprint if tracked)\n%s/\n' \
+    printf '\n# sso-single-branch-development run records (self-stale the evidence fingerprint if tracked)\n%s/\n' \
       "$RUNS_DIR_NAME" >> "$gitignore"
     say "   ✓ appended '$RUNS_DIR_NAME/' to .gitignore"
   fi

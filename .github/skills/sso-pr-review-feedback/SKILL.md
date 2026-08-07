@@ -1,18 +1,18 @@
 ---
-name: pr-review-feedback
-version: 0.1.0
+name: sso-pr-review-feedback
+version: 0.2.0
 description: 'Rework an existing pull request in response to review feedback: triage comments, apply
 fixes on the PR branch under TDD/regression discipline, re-capture evidence at the new fingerprint,
 and update the PR (fast-forward push) or hand back to the reviewer. Use when asked to "address PR
 comments", "respond to review feedback", "fix review findings", or "push review changes". Reuses the
-single-branch-development hooks bundle in resume mode — this is post-implementation maintenance, not a
+sso-single-branch-development hooks bundle in resume mode — this is post-implementation maintenance, not a
 fresh feature build.'
 ---
 
 # PR Review Feedback
 
 Turn a batch of PR review comments into applied, evidenced changes on the **existing** PR branch. This
-is **not** an execution core of `single-branch-development` — it starts mid-stream on already-merged-to-
+is **not** an execution core of `sso-single-branch-development` — it starts mid-stream on already-merged-to-
 branch work, so there is no preflight-mint, no isolate, no RED authoring from scratch. It is a distinct
 lifecycle stage that **reuses that skill's hooks bundle in resume mode** and closes with a PR update
 instead of a fresh draft PR.
@@ -22,7 +22,7 @@ instead of a fresh draft PR.
 - User asks to address, respond to, or resolve pull-request review comments.
 - A reviewer left change requests and you must apply fixes on the same PR branch.
 - CI or a human flagged findings on an open PR that need rework + re-verification.
-- **Not** for building a feature/bugfix from scratch — use `single-branch-development` (story mode / N=1).
+- **Not** for building a feature/bugfix from scratch — use `sso-single-branch-development` (story mode / N=1).
 - **Not** for evaluating *incoming* review feedback quality — that decision lives in `receiving-code-review`.
 
 ## Prerequisites
@@ -30,13 +30,13 @@ instead of a fresh draft PR.
 - An **existing** PR branch checked out (or its name known); `git` + `gh` authenticated.
 - The review comments available (PR thread, `gh pr view --comments`, or pasted).
 - Project test commands known (lint/unit/integration/e2e as applicable).
-- The `single-branch-development` hooks bundle installed in `.github/hooks/` (this skill ships **no**
+- The `sso-single-branch-development` hooks bundle installed in `.github/hooks/` (this skill ships **no**
   hooks of its own — see [Hooks](#hooks-reused-not-owned)).
 
 ## Run ledger (do this first)
 
 Rework runs long — a big review batch means many fix→re-review cycles — so the same
-[compaction discipline](../single-branch-development/SKILL.md#run-ledger-do-this-first-keep-it-current)
+[compaction discipline](../sso-single-branch-development/SKILL.md#run-ledger-do-this-first-keep-it-current)
 applies here. Two habits:
 
 1. **Open a TODO list with one item per accepted comment**, plus the pipeline steps. The triage
@@ -49,13 +49,13 @@ applies here. Two habits:
 
 ## Pipeline
 
-The bracket is the **resume half** of `single-branch-development`: no fresh mint, no isolate. The core
+The bracket is the **resume half** of `sso-single-branch-development`: no fresh mint, no isolate. The core
 is triage → fix-under-test → re-evidence → update.
 
 1. **Triage the feedback** (`receiving-code-review`) — classify each comment: *accept*, *reject with
    rationale*, or *needs clarification*. Do **not** blindly implement — a technically wrong suggestion
    gets a reasoned pushback, not a change. Group accepted items into fix batches.
-2. **Reconcile / resume** — run [`track-reconcile.sh`](../single-branch-development/scripts/track-reconcile.sh)
+2. **Reconcile / resume** — run [`track-reconcile.sh`](../sso-single-branch-development/scripts/track-reconcile.sh)
    against the PR branch to rebuild position from committed history + `runs/<run-id>.json`. Stash any
    untrusted `dirty_worktree`; set `TRACK_BASE_REF` to the **PR base** so the evidence gate recomputes
    exactly which kinds the rework touches.
@@ -69,7 +69,7 @@ is triage → fix-under-test → re-evidence → update.
 4. **Re-review the delta** (`requesting-code-review`) — a fresh two-stage pass over the fix diff
    (stage-1 spec/comment-resolution, stage-2 quality), applying the **governance bundle** for the
    changed surface (see
-   [`governance.md`](../single-branch-development/references/governance.md); a rework diff is governed
+   [`governance.md`](../sso-single-branch-development/references/governance.md); a rework diff is governed
    exactly like a fresh one) plus `security-and-owasp.instructions.md` on any trust-boundary change.
    A review fix **invalidates prior green** — earlier evidence is now stale.
 5. **Converge & re-capture evidence** (`verification-before-completion`) — make no further edits, then
@@ -84,12 +84,12 @@ is triage → fix-under-test → re-evidence → update.
 
 ## Skill-Per-Step Map
 
-Kind legend (same as `single-branch-development`): 🧩 **skill** = runs in-session; 🤖 **subagent** = dispatched agent; ⚙️ **script** = bundled hook/CLI.
+Kind legend (same as `sso-single-branch-development`): 🧩 **skill** = runs in-session; 🤖 **subagent** = dispatched agent; ⚙️ **script** = bundled hook/CLI.
 
 | Step | Superpower skill / script | Kind |
 |------|---------------------------|------|
 | 1 Triage feedback | `receiving-code-review` | 🧩 skill |
-| 2 Reconcile / resume | `track-reconcile.sh` (single-branch-development bundle) | ⚙️ script |
+| 2 Reconcile / resume | `track-reconcile.sh` (sso-single-branch-development bundle) | ⚙️ script |
 | 3 Behavioral fix | `test-driven-development` (+ `systematic-debugging` for regressions) | 🧩 skill |
 | 3 Independent fixes | `dispatching-parallel-agents` → read-only maker subagents | 🧩 skill → 🤖 subagents |
 | 4 Re-review delta | `requesting-code-review` + `security-and-owasp` (trust-boundary) | 🧩 skill |
@@ -98,8 +98,8 @@ Kind legend (same as `single-branch-development`): 🧩 **skill** = runs in-sess
 
 ## Hooks (Reused, Not Owned)
 
-This skill ships **no hooks**. It reuses the `single-branch-development` bundle
-([`../single-branch-development/scripts/`](../single-branch-development/scripts/)) unchanged, because
+This skill ships **no hooks**. It reuses the `sso-single-branch-development` bundle
+([`../sso-single-branch-development/scripts/`](../sso-single-branch-development/scripts/)) unchanged, because
 hooks key on git/tool operations and env vars — **not** on which skill is driving. The evidence
 capture/gate (`track-evidence.sh`, `track-evidence-gate.sh`) is the highest-value reuse here: it forces
 a fresh capture at the post-fix fingerprint so an "already reviewed" PR can't ship stale green.
@@ -111,7 +111,7 @@ The **only** configuration difference from a fresh build:
 - Set `TRACK_ALLOW_FF_PUSH=1` **only if** this flow should push the PR-branch update itself. Leave it
   unset to keep the default push lockout (commit + hand back).
 
-See [`../single-branch-development/references/hooks.md`](../single-branch-development/references/hooks.md)
+See [`../sso-single-branch-development/references/hooks.md`](../sso-single-branch-development/references/hooks.md)
 for the full bundle, env reference, and what the run record captures.
 
 ## Quality Gates (Owned Here)
@@ -153,7 +153,7 @@ for the full bundle, env reference, and what the run record captures.
 - **Re-review + re-evidence** reuse `requesting-code-review` (+ `security-and-owasp`) and
   `verification-before-completion`.
 - **Hooks + run record** are single-sourced in
-  [`../single-branch-development/references/hooks.md`](../single-branch-development/references/hooks.md);
+  [`../sso-single-branch-development/references/hooks.md`](../sso-single-branch-development/references/hooks.md);
   this skill only sets `TRACK_BASE_REF` and (optionally) `TRACK_ALLOW_FF_PUSH`.
-- Related builder: [`../single-branch-development/SKILL.md`](../single-branch-development/SKILL.md) —
+- Related builder: [`../sso-single-branch-development/SKILL.md`](../sso-single-branch-development/SKILL.md) —
   the from-scratch implement pipeline this flow resumes from.

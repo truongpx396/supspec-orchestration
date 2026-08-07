@@ -18,7 +18,7 @@
 #
 # Confirmation waiver (--yes / AUTO_CONFIRM=1):
 #   The SKILL requires a HUMAN to approve the summary below before anything is created.
-#   That is impossible for a worker fanned out by executing-parallel-tracks: there is no
+#   That is impossible for a worker fanned out by sso-executing-parallel-tracks: there is no
 #   human on the other end of a dispatched subagent, so an un-waivable confirm makes the
 #   worker either hang forever or silently self-waive — and N workers each guessing is
 #   worse than either. `--yes` (or AUTO_CONFIRM=1) is the EXPLICIT, RECORDED waiver: the
@@ -311,7 +311,7 @@ if [ "$mode" = "persist" ]; then
   # record (tool_calls / trace[] / skills[] / heartbeat) would stay empty. Persist
   # RUN_ID into the per-worktree track-env.sh that every hook sources, as an
   # idempotent managed block that never touches operator scope lines. An
-  # already-exported RUN_ID (e.g. an executing-parallel-tracks per-worker value)
+  # already-exported RUN_ID (e.g. an sso-executing-parallel-tracks per-worker value)
   # still wins. Guarded by the track-env.base.sh marker so this only ever fires
   # inside a real INSTALLED hooks dir — never in the skill's scripts/ source mirror
   # that unit tests run in-place.
@@ -416,7 +416,7 @@ if [ "$mode" = "complete" ]; then
 fi
 
 {
-  echo "PREFLIGHT — single-branch-development"
+  echo "PREFLIGHT — sso-single-branch-development"
   echo "  Mode:         $([ "$resume" = true ] && echo 'RESUME (breadcrumb found)' || echo 'START (fresh)')"
   echo "  Track:        $track"
   echo "  Tasks:        ${tasks:-<unspecified>}"

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# track-guard.sh — PreToolUse guard for the executing-parallel-tracks skill.
+# track-guard.sh — PreToolUse guard for the sso-executing-parallel-tracks skill.
 #
 # Makes two of the skill's gates MECHANICAL instead of prompt-trusted:
 #   1. Deny-by-default file ownership (per worktree) + frozen entrypoints.

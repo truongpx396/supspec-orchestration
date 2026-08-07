@@ -2,9 +2,9 @@
 # install.sh — one-command installer for the supspec-orchestration skills.
 #
 # Places every artifact a consuming project needs, for GitHub Copilot and/or Claude Code,
-# then delegates the hook bundle to the canonical single-branch-development installer. It is
+# then delegates the hook bundle to the canonical sso-single-branch-development installer. It is
 # the top-level orchestrator; the per-bundle mechanics live in
-#   .github/skills/single-branch-development/scripts/install-hooks.sh
+#   .github/skills/sso-single-branch-development/scripts/install-hooks.sh
 # which this script calls so there is exactly one source of truth for the hooks/env/deps wiring.
 #
 # WHAT LANDS WHERE (in the TARGET repo):
@@ -69,8 +69,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC="$SCRIPT_DIR"                      # this catalog repo = the source of truth
-INSTALL_HOOKS="$SRC/.github/skills/single-branch-development/scripts/install-hooks.sh"
-DEPS_MANIFEST="$SRC/.github/skills/single-branch-development/templates/skill-deps.json"
+INSTALL_HOOKS="$SRC/.github/skills/sso-single-branch-development/scripts/install-hooks.sh"
+DEPS_MANIFEST="$SRC/.github/skills/sso-single-branch-development/templates/skill-deps.json"
 
 # ── argument parsing ─────────────────────────────────────────────────────────
 want_copilot=0
@@ -269,11 +269,19 @@ say ""
 dep_version() { jq -r --arg k "$1" '.dependencies[$k].range // ""' "$DEPS_MANIFEST" | sed 's/[^0-9.]//g'; }
 
 fetch_dep() {
-  # fetch_dep NAME REPO_URL SUBPATH DEST_UNDER_CLAUDE_SKILLS
-  #   SUBPATH = subtree inside the clone to copy ("" = whole repo). DEST = target dir name.
-  local name="$1" url="$2" subpath="$3" dest="$4" ver tmp got_tag=""
+  # fetch_dep NAME REPO_URL SUBPATH [DEST_UNDER_CLAUDE_SKILLS]
+  #   SUBPATH = subtree inside the clone to copy ("" = whole repo).
+  #   DEST = target dir name, nested one level under .claude/skills/. Leave empty/omit to
+  #   copy SUBPATH's immediate children directly into .claude/skills/ instead — REQUIRED
+  #   when SUBPATH is itself a directory of independent SKILL.md dirs (e.g. superpowers'
+  #   "skills/"), because Claude Code only discovers SKILL.md exactly one level under
+  #   .claude/skills/ — a DEST wrapper folder makes every skill inside it undiscoverable
+  #   (github.com/anthropics/claude-code#28266). Only wrap in DEST for a dep that is itself
+  #   a single skill (one SKILL.md at the SUBPATH root).
+  local name="$1" url="$2" subpath="$3" dest="${4:-}" ver tmp got_tag=""
+  local dest_disp=".claude/skills/${dest:-<flattened, no wrapper dir>}"
   ver="$(dep_version "$name")"
-  say "4a. Dependency skill '$name' (pinned $ver) → .claude/skills/$dest:"
+  say "4a. Dependency skill '$name' (pinned $ver) → $dest_disp:"
   if [ -z "$ver" ]; then say "     no version pinned in skill-deps.json — skipping."; return 0; fi
   if ! act; then say "     would clone $url @ v$ver (or $ver), copy ${subpath:-<repo root>}"; say ""; return 0; fi
   tmp="$(mktemp -d)"
@@ -291,13 +299,14 @@ fetch_dep() {
   [ -n "$subpath" ] && from="$tmp/clone/$subpath"
   if [ ! -e "$from" ]; then
     say "     ⚠ expected subpath '$subpath' not found in $name@${got_tag:-default} — layout may have changed."
-    say "       Copying the whole checkout instead; verify .claude/skills/$dest afterwards."
+    say "       Copying the whole checkout instead; verify $dest_disp afterwards."
     from="$tmp/clone"
   fi
-  mkdir -p "$TARGET/.claude/skills/$dest"
-  # copy the CONTENTS of $from into the destination
-  cp -R "$from/." "$TARGET/.claude/skills/$dest/" 2>/dev/null || cp -R "$from" "$TARGET/.claude/skills/$dest"
-  rm -rf "$TARGET/.claude/skills/$dest/.git" 2>/dev/null || true
+  local target_dir="$TARGET/.claude/skills${dest:+/$dest}"
+  mkdir -p "$target_dir"
+  # copy the CONTENTS of $from into the destination (flat into .claude/skills/ when dest is empty)
+  cp -R "$from/." "$target_dir/" 2>/dev/null || cp -R "$from" "$target_dir"
+  rm -rf "$target_dir/.git" 2>/dev/null || true
   rm -rf "$tmp"
   say "     ✓ vendored $name@${got_tag:-default-branch}"
   say ""
@@ -386,7 +395,10 @@ fetch_speckit_skills() {
 }
 
 if [ "$fetch_deps" -eq 1 ]; then
-  [ "$want_claude" -eq 1 ] && fetch_dep superpowers https://github.com/obra/superpowers.git skills superpowers
+  # dest intentionally omitted: superpowers' "skills/" subtree is 14 independent SKILL.md
+  # dirs, so they must land directly under .claude/skills/, not nested in a wrapper dir
+  # (see the DEST doc on fetch_dep above).
+  [ "$want_claude" -eq 1 ] && fetch_dep superpowers https://github.com/obra/superpowers.git skills
   { [ "$want_claude" -eq 1 ] || [ "$want_copilot" -eq 1 ]; } && fetch_speckit_skills
 elif [ "$want_claude" -eq 1 ] || [ "$want_copilot" -eq 1 ]; then
   say "4. Dependency skills: --no-deps set — skipping superpowers/speckit fetch."
