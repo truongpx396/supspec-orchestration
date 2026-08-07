@@ -48,6 +48,15 @@
 # Requires: jq, git. gh only when PREFLIGHT_REQUIRE_GH=1. Keep runtime < 5s.
 set -eufo pipefail
 
+# An EXPLICIT RUN_ID is one a CALLER exported (an orchestrator's per-worker id, or a
+# human pinning a record). Capture it BEFORE the bootstrap below sources track-env.sh,
+# which may carry a managed activation block left by an EARLIER run in this checkout.
+# Only the caller's value may override the id this run picks; a file-supplied one is an
+# activation hint for the recorder hooks and nothing more. Without this split, starting
+# a NEW track in a checkout that still holds a previous run's block silently reuses that
+# run's id — the fresh start writes into a finished run's record.
+RUN_ID_EXPLICIT="${RUN_ID:-}"
+
 # Bootstrap: load hook presets sitting beside this script, if present:
 #   1. track-env.sh       per-worktree LOCAL overrides (gitignored, optional)
 #   2. track-env.base.sh  repo-wide COMMITTED defaults (travels into every worktree)
@@ -166,8 +175,8 @@ done <<<"$sorted"
 
 # --- pick RUN_ID: explicit override > existing breadcrumb (resume) > mint fresh -----
 resume=false
-if [ -n "${RUN_ID:-}" ]; then
-  run_id="$RUN_ID"
+if [ -n "$RUN_ID_EXPLICIT" ]; then
+  run_id="$RUN_ID_EXPLICIT"
   [ -n "$existing_id" ] && [ "$existing_id" = "$run_id" ] && resume=true
 elif [ -n "$existing_id" ]; then
   run_id="$existing_id"; resume=true
@@ -301,11 +310,22 @@ if [ "$mode" = "persist" ]; then
   # env and otherwise no-op. In a solo run no orchestrator exports it, so the run
   # record (tool_calls / trace[] / skills[] / heartbeat) would stay empty. Persist
   # RUN_ID into the per-worktree track-env.sh that every hook sources, as an
-  # idempotent managed block that never touches operator scope lines. The
-  # ${RUN_ID:-...} form means an already-exported RUN_ID (e.g. an
-  # executing-parallel-tracks per-worker value) still wins. Guarded by the
-  # track-env.base.sh marker so this only ever fires inside a real INSTALLED hooks
-  # dir — never in the skill's scripts/ source mirror that unit tests run in-place.
+  # idempotent managed block that never touches operator scope lines. An
+  # already-exported RUN_ID (e.g. an executing-parallel-tracks per-worker value)
+  # still wins. Guarded by the track-env.base.sh marker so this only ever fires
+  # inside a real INSTALLED hooks dir — never in the skill's scripts/ source mirror
+  # that unit tests run in-place.
+  #
+  # The block SELF-RETIRES (see the conditions it writes). `--complete` also removes
+  # it, but completion is reached at draft-PR handoff ONLY: a run that ends any other
+  # way — ceiling trip, `blocked`, budget-exceeded, crash, human abandon — never gets
+  # there and used to leave an unconditional `export RUN_ID=…` behind forever. That
+  # residue governs every LATER session in the checkout, on any branch: the meter
+  # re-reads a run record whose tool_calls already exceeds the ceiling and halts every
+  # tool call (a bricked checkout, unrecoverable without hand-editing the file), and
+  # the evidence gate demands the finished task's kinds against the new task's diff.
+  # Binding adoption to "run is live AND this checkout is on its branch" retires the
+  # id on every exit path instead of just the happy one.
   _env_dir="$(_canon_hooks_dir)"
   if [ -f "$_env_dir/track-env.base.sh" ]; then
     env_file="$_env_dir/track-env.sh"
@@ -318,7 +338,30 @@ if [ "$mode" = "persist" ]; then
     fi
     {
       printf '%s\n' "$_blk_begin"
-      printf 'export RUN_ID="${RUN_ID:-%s}"\n' "$run_id"
+      cat <<'SBD_BLK_HEAD'
+# Adopt this run's id ONLY while it is still this checkout's live run. A caller's
+# exported RUN_ID always wins; a terminal or off-branch run is never re-adopted.
+if [ -z "${RUN_ID:-}" ]; then
+SBD_BLK_HEAD
+      printf '  __sbd_id="%s"\n'     "$run_id"
+      printf '  __sbd_branch="%s"\n' "$branch"
+      printf '  __sbd_runs="%s"\n'   "$RUNS_DIR"
+      cat <<'SBD_BLK_TAIL'
+  __sbd_live=1
+  # Terminal status (meter: no-progress · tokens: budget-exceeded · note: blocked/success).
+  if jq -e '(.status // "") != ""' "$__sbd_runs/$__sbd_id.json" >/dev/null 2>&1; then __sbd_live=0; fi
+  # Completed at draft-PR handoff.
+  if [ "$__sbd_live" = 1 ] \
+     && jq -e '(.completed_utc // "") != ""' "$__sbd_runs/$__sbd_id.dispatch" >/dev/null 2>&1; then __sbd_live=0; fi
+  # Wrong branch. Skipped while the run's branch does not exist yet (Step 1, before the
+  # branch/worktree is cut) so a starting run still meters itself.
+  if [ "$__sbd_live" = 1 ] && [ -n "$__sbd_branch" ] \
+     && git rev-parse --verify --quiet "refs/heads/$__sbd_branch" >/dev/null 2>&1 \
+     && [ "$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '')" != "$__sbd_branch" ]; then __sbd_live=0; fi
+  if [ "$__sbd_live" = 1 ]; then export RUN_ID="$__sbd_id"; fi
+  unset __sbd_id __sbd_branch __sbd_runs __sbd_live
+fi
+SBD_BLK_TAIL
       printf '%s\n' "$_blk_end"
     } >> "$env_file"
   fi

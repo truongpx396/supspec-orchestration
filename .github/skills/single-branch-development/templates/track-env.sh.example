@@ -28,6 +28,13 @@
 # track-preflight.sh and recovered from the runs/*.dispatch breadcrumb on resume.
 # Hand-setting it breaks resume. Leave it to the preflight step.
 #
+# `track-preflight.sh --persist` appends a MANAGED RUN_ID block to track-env.sh (not to
+# this base file). That block is self-retiring: it adopts its id only while the run is
+# LIVE (no terminal status, not completed) and this checkout is on the run's own branch.
+# Do not replace it with a bare `export RUN_ID=…` — an unconditional one outlives the run
+# it names and then governs every later session in the checkout, which is how a tripped
+# tool-call ceiling ends up halting an unrelated task's every tool call.
+#
 # TWO CATEGORIES OF VAR (tagged inline below — the tag is documentation, NOT part
 # of the name; the hooks read the plain TRACK_*/PREFLIGHT_* names):
 #   [TASK-DERIVED]  preflight PROPOSES this per run from the task's file/language
@@ -73,6 +80,15 @@ export TRACK_DEPS_MANIFEST="${TRACK_DEPS_MANIFEST:-}"              # [REPO-POLIC
 export TRACK_EVIDENCE_KINDS="${TRACK_EVIDENCE_KINDS:-}"              # [REPO-POLICY] label:pattern pack (see examples above)
 export TRACK_EVIDENCE_RULES="${TRACK_EVIDENCE_RULES:-}"              # [REPO-POLICY] diff-path glob → required kind (see examples above)
 export TRACK_REQUIRED_EVIDENCE="${TRACK_REQUIRED_EVIDENCE:-}"        # [TASK-DERIVED] kinds required on EVERY diff (floor); empty = rules-only. e.g. "go-test,py"
+# [REPO-POLICY] Non-code paths that cannot change any test result. When EVERY path the diff
+# touches matches one of these, the gate no-ops — INCLUDING the floor above, which a
+# prose-only diff can never legitimately satisfy (its only ways out would be to re-run an
+# unrelated suite or waive the gate wholesale). ALL-or-nothing: one code file anywhere in
+# the diff restores the full requirement set, so this cannot smuggle code past the floor.
+# Ships EMPTY (off) — declare your own prose paths; a repo that keeps runnable examples
+# under docs/ should NOT blanket-skip docs/.
+#   e.g. TRACK_EVIDENCE_SKIP_GLOBS="*.md;docs/*;specs/*;LICENSE;.github/ISSUE_TEMPLATE/*"
+export TRACK_EVIDENCE_SKIP_GLOBS="${TRACK_EVIDENCE_SKIP_GLOBS:-}"    # ';'-separated globs; `*` spans `/`
 export TRACK_BASE_REF="${TRACK_BASE_REF:-origin/main}"               # [REPO-POLICY] STRONGLY RECOMMENDED — the gate needs a real base or a committed diff looks empty and passes silently
 
 # --- ceilings / hardening ----------------------------------------------------

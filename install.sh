@@ -343,13 +343,43 @@ fetch_speckit_skills() {
   fi
   local out status
   out="$(cd "$TARGET" && uvx --from "specify-cli==$ver" specify integration install "$key" --script sh --force "${opts[@]+"${opts[@]}"}" 2>&1)"; status=$?
+  # `specify integration install` is IDEMPOTENT, and --force does not change that: on a repo
+  # that already has the integration it prints "Integration '<key>' is already installed …
+  # No files were changed" and exits 0. Exit status alone therefore cannot tell "installed at
+  # the pinned version" from "left whatever was already on disk" — so a re-run of this
+  # installer reported the pin as applied while an older speckit bundle stayed put. `upgrade`
+  # is the command that actually re-writes the files (same flags, diff-aware).
+  if [ "$status" -eq 0 ] && printf '%s' "$out" | grep -qiE "already installed|no files were changed"; then
+    say "     · '$key' integration already present — install is a no-op; upgrading in place."
+    out="$(cd "$TARGET" && uvx --from "specify-cli==$ver" specify integration upgrade "$key" --script sh --force "${opts[@]+"${opts[@]}"}" 2>&1)"; status=$?
+  fi
   if [ "$status" -ne 0 ]; then
-    say "     ✗ specify integration install $key failed:"
+    say "     ✗ specify integration install/upgrade $key failed:"
     say "$out" | sed 's/^/       /'
     say ""
     return 0
   fi
-  say "     ✓ installed speckit skills for '$key' → $label"
+  # VERIFY instead of trusting the exit code: read back what the integration recorded about
+  # itself. A pin nobody checks is a pin that can silently not apply — which is the bug this
+  # block exists for. Best-effort: an unreadable/absent file is reported, never fatal.
+  local state="$TARGET/.specify/integration.json" got="" have_key=""
+  if [ -f "$state" ]; then
+    got="$(jq -r '.version // empty' "$state" 2>/dev/null || true)"
+    have_key="$(jq -r --arg k "$key" '((.installed_integrations // []) | index($k)) // empty' "$state" 2>/dev/null || true)"
+  fi
+  if [ -n "$got" ] && [ "$got" != "$ver" ]; then
+    say "     ⚠ '$key' installed, but .specify/integration.json reports version $got (pinned $ver)."
+    say "       Reconcile manually: specify integration upgrade $key --force"
+    say ""
+    return 0
+  fi
+  if [ -f "$state" ] && [ -z "$have_key" ]; then
+    say "     ⚠ '$key' reported success but is absent from .specify/integration.json installed_integrations."
+    say "       Check manually: specify integration status"
+    say ""
+    return 0
+  fi
+  say "     ✓ installed speckit skills for '$key' → $label${got:+ (integration.json: $got)}"
   [ "$want_claude" -eq 1 ] && [ "$want_copilot" -eq 1 ] && \
     say "     (skipped a separate copilot install: Copilot also discovers .claude/skills/)"
   say ""

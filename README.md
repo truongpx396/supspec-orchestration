@@ -644,6 +644,7 @@ Key env vars (set in `track-env.base.sh` unless noted):
 | `TRACK_EVIDENCE_KINDS` | `go-test:…;py:…;ts:…` | `label:command` pack — what commands produce evidence |
 | `TRACK_EVIDENCE_RULES` | see table below | Auto-require evidence kinds based on which files changed |
 | `TRACK_REQUIRED_EVIDENCE` | `""` *(task-derived)* | Extra kinds required on every diff regardless of rules |
+| `TRACK_EVIDENCE_SKIP_GLOBS` | `""` *(off)* | `;`-separated non-code globs. Gate no-ops (floor included) only when **every** changed path matches — one code file restores it. For prose-only diffs, which can't produce a test result at all |
 | `TRACK_BASE_REF` | `origin/main` | Base ref for the diff — wrong value silently passes an empty diff |
 
 `TRACK_EVIDENCE_RULES` is a `;`-separated list of `path-glob:kind` pairs. The gate resolves which kinds are required by matching changed files against these globs:

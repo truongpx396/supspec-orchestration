@@ -82,7 +82,10 @@ if [ -n "${TRACK_MAX_TOOL_CALLS:-}" ] && [ "$count" -gt "$TRACK_MAX_TOOL_CALLS" 
   # Also record the terminal state for the orchestrator's summary.
   tmp2="$(mktemp)"
   jq '.status = "no-progress"' "$rec" >"$tmp2" && mv "$tmp2" "$rec"
-  jq -nc --arg r "tool-call ceiling ($TRACK_MAX_TOOL_CALLS) exceeded for run $RUN_ID; halting per hard-stop policy (status: no-progress)" \
+  # The count is CUMULATIVE for the run, so the trip is sticky by design — but a sticky
+  # halt with no named way out is what turns "this run is over" into "this checkout is
+  # over". Name both deliberate exits so the next operator does not have to read the hook.
+  jq -nc --arg r "tool-call ceiling ($TRACK_MAX_TOOL_CALLS) exceeded for run $RUN_ID (count: $count); halting per hard-stop policy (status: no-progress). The count is cumulative for this run, so it stays tripped: to continue deliberately, raise TRACK_MAX_TOOL_CALLS above $count, or start a fresh run (new RUN_ID) via track-preflight.sh." \
     '{continue:false, stopReason:$r}'
 fi
 exit 0

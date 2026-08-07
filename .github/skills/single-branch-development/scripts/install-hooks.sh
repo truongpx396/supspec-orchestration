@@ -226,6 +226,7 @@ export TRACK_DEPS_MANIFEST="\${TRACK_DEPS_MANIFEST:-}"              # path to sk
 export TRACK_EVIDENCE_KINDS="\${TRACK_EVIDENCE_KINDS:-${kinds}}"      # label:pattern pack.
 export TRACK_EVIDENCE_RULES="\${TRACK_EVIDENCE_RULES:-${rules}}"      # diff-path glob → required kind.
 export TRACK_REQUIRED_EVIDENCE="\${TRACK_REQUIRED_EVIDENCE:-}"        # [TASK-DERIVED] kinds required on EVERY diff (floor); empty = rules-only.
+export TRACK_EVIDENCE_SKIP_GLOBS="\${TRACK_EVIDENCE_SKIP_GLOBS:-}"    # [REPO-POLICY] ';'-separated NON-CODE globs. Gate no-ops (floor included) only when EVERY touched path matches; one code file restores it. Ships off — e.g. "*.md;docs/*;specs/*".
 export TRACK_BASE_REF="\${TRACK_BASE_REF:-$base_ref}"                 # [REPO-POLICY] real base or a committed diff looks empty and passes silently.
 
 # --- ceilings / hardening ----------------------------------------------------

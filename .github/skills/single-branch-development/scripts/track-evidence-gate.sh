@@ -21,6 +21,11 @@
 #                            frontend-only change requires `ts`, never `pg-explain`.
 #                            Globs are shell patterns where `*` spans `/` (a leading
 #                            "**/" is tolerated). Rules are repo-supplied, not baked in.
+#   TRACK_EVIDENCE_SKIP_GLOBS (optional) ';'-separated globs naming NON-CODE paths, e.g.
+#                            "*.md;docs/*;specs/*". When EVERY path the diff touches
+#                            matches one, the gate no-ops — including the floor, which a
+#                            prose-only diff can never legitimately satisfy. One code file
+#                            in the diff restores the full requirement set. Empty = off.
 #   TRACK_BASE_REF           (optional) base to diff against for "what changed" (e.g.
 #                            main / origin/main). Falls back to the branch upstream,
 #                            then to working-tree changes vs HEAD only.
@@ -110,6 +115,37 @@ worktree="$(git diff --name-only HEAD 2>/dev/null || true)"
 # .tsx/.sql still selects the right evidence kind (freshness still uses git diff).
 untracked="$(git ls-files --others --exclude-standard 2>/dev/null || true)"
 touched="$(printf '%s\n%s\n%s\n' "$committed" "$worktree" "$untracked" | sed '/^$/d' | sort -u)"
+
+# --- documentation-only escape (opt-in) ---------------------------------------------
+# TRACK_REQUIRED_EVIDENCE is a floor: required on EVERY diff, by design, so a run cannot
+# dodge its suite by touching only untested files. But a diff of pure prose cannot change
+# a go/py/ts result, so demanding those kinds for it is a requirement no honest action can
+# satisfy — and a gate that can only be satisfied dishonestly gets satisfied dishonestly
+# (re-run someone else's suite, or waive the gate wholesale). This narrows that case
+# instead: when EVERY touched path matches a declared non-code glob, the gate no-ops.
+#
+# ALL-or-nothing on purpose — ONE code file anywhere in the diff restores the full
+# requirement set, so this cannot be used to smuggle code past the floor. Empty by
+# default (no behavior change); the repo declares its own prose paths.
+if [ -n "${TRACK_EVIDENCE_SKIP_GLOBS:-}" ] && [ -n "$touched" ]; then
+  skip_globs="$(printf '%s' "$TRACK_EVIDENCE_SKIP_GLOBS" | tr ';' '\n' | sed '/^$/d')"
+  _matches_any() { # <path> <newline-separated globs> -> 0 when the path matches one
+    _p="$1"
+    while IFS= read -r _g; do
+      [ -n "$_g" ] || continue
+      _g="${_g#\*\*/}"   # tolerate a leading **/, same as the rules globs
+      # shellcheck disable=SC2254  # $_g is intentionally a pattern
+      case "$_p" in $_g) return 0 ;; esac
+    done <<<"$2"
+    return 1
+  }
+  all_prose=1
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    _matches_any "$p" "$skip_globs" || { all_prose=0; break; }
+  done <<<"$touched"
+  if [ "$all_prose" -eq 1 ]; then exit 0; fi
+fi
 
 # Start from the static floor.
 required=""
