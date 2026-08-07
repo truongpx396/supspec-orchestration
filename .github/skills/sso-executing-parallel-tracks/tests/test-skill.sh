@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# test-skill.sh — Regression suite for the executing-parallel-tracks skill.
+# test-skill.sh — Regression suite for the sso-executing-parallel-tracks skill.
 #
 # Usage (from repo root):
-#   bash .github/skills/executing-parallel-tracks/tests/test-skill.sh
+#   bash .github/skills/sso-executing-parallel-tracks/tests/test-skill.sh
 #
 # 27 suites / ~186 assertions. Exit 0 if all non-skipped tests pass, 1 if any fail.
 # Requires: bash 4+, jq, git, awk.
@@ -39,8 +39,8 @@ assert_pipe() {
 
 # ─── paths ───────────────────────────────────────────────────────────────────
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
-SKILL_DIR="$REPO_ROOT/.github/skills/executing-parallel-tracks"
-SBD_DIR="$REPO_ROOT/.github/skills/single-branch-development"
+SKILL_DIR="$REPO_ROOT/.github/skills/sso-executing-parallel-tracks"
+SBD_DIR="$REPO_ROOT/.github/skills/sso-single-branch-development"
 SKILL="$SKILL_DIR/SKILL.md"
 MANIFEST_TPL="$SKILL_DIR/track-manifest.template.md"
 GUARD="$SBD_DIR/scripts/track-guard.sh"
@@ -140,8 +140,8 @@ RUN_RECORD_JSON="$(awk '
 suite "Suite 1 — SKILL.md Structural Integrity"
 
 assert  "1  SKILL.md exists" test -f "$SKILL"
-assert  "2  frontmatter name=executing-parallel-tracks" \
-  grep -q "name: executing-parallel-tracks" "$SKILL"
+assert  "2  frontmatter name=sso-executing-parallel-tracks" \
+  grep -q "name: sso-executing-parallel-tracks" "$SKILL"
 assert  "3  Steps 1-7 all present" \
   awk '/^### 1\. Precheck/{s1=1}/^### 2\. Create/{s2=1}/^### 3\. Fan/{s3=1}/^### 4\. Per-track/{s4=1}/^### 5\. Integration/{s5=1}/^### 6\. Stale-PR/{s6=1}/^### 7\. Report/{s7=1}END{exit !(s1&&s2&&s3&&s4&&s5&&s6&&s7)}' "$SKILL"
 assert  "3a Step 0 Analyze & plan waves present" \
@@ -188,7 +188,7 @@ assert  "20b SKILL.md references scripts/track-precheck.sh" \
   grep -q "scripts/track-precheck.sh" "$SKILL"
 
 # --- Confirm-waiver plumbing (the fan-out deadlock) --------------------------
-# single-branch-development treats its preflight confirm as a MANDATORY human gate. A
+# sso-single-branch-development treats its preflight confirm as a MANDATORY human gate. A
 # dispatched worker has no human, so unless the orchestrator passes the waiver each
 # worker either blocks forever or silently self-approves — and N workers each deciding
 # that independently is the worst outcome. These assert the plumbing exists on BOTH

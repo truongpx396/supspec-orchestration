@@ -1,6 +1,6 @@
 ---
-name: single-branch-development
-version: 0.2.2
+name: sso-single-branch-development
+version: 0.3.0
 description: 'Run a full end-to-end implementation pipeline on one branch/worktree in one of three execution cores — scaffold (non-behavioral bootstrap batch), story (TDD for new/changed behavior), or refactor (behavior-preserving keep-green) — with two-stage spec-compliance + code-quality verification, evidence capture, optional Copilot hooks, and draft-PR handoff. Use when asked to implement one feature, fix one bug, refactor existing code, or do foundation/scaffold setup with strong quality gates but without multi-track parallel orchestration.'
 ---
 
@@ -24,7 +24,7 @@ by an orchestrator.
 - You need a reusable per-branch worker contract that another skill can compose.
 - A bugfix counts — story mode N=1. A refactor counts — refactor mode, keep-green.
 - **Not** for reworking PR-review feedback on already-implemented work (no preflight/isolate/
-  RED-authoring to run) — that's `pr-review-feedback`.
+  RED-authoring to run) — that's `sso-pr-review-feedback`.
 
 ## Prerequisites
 
@@ -476,5 +476,5 @@ already took that human gate at its wave plan. Nothing else is waivable by an or
   freeze → incremental green, and the incremental-vs-big-bang rationale.
 - [`references/refactor-mode.md`](references/refactor-mode.md) — behavior-preserving keep-green core:
   the guard, the characterization safety-net, and the never-go-red transform rule.
-- Related orchestrator: `../executing-parallel-tracks/SKILL.md` (dispatches one run of this skill
+- Related orchestrator: `../sso-executing-parallel-tracks/SKILL.md` (dispatches one run of this skill
   per track and layers parallel-only overlays).

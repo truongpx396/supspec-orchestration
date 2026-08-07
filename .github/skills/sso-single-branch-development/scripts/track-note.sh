@@ -152,7 +152,7 @@ case "$sub" in
   status)
     # TERMINAL STATE. Blocked/exhausted runs are not successes — naming them in the record
     # is what stops a worker dressing one up as done. Constrained to the same four states
-    # executing-parallel-tracks routes on, so a solo run and a fleet worker report alike.
+    # sso-executing-parallel-tracks routes on, so a solo run and a fleet worker report alike.
     # NOTE: track-meter.sh (no-progress) and track-tokens.sh (budget-exceeded) also write
     # `status` mechanically; this is the model-asserted path for the states no hook sees.
     state="${2:-}"

@@ -1,5 +1,5 @@
 <!--
-  pr-body.md — completion / PR-body template for single-branch-development.
+  pr-body.md — completion / PR-body template for sso-single-branch-development.
 
   TWO ZONES, kept deliberately separate:
 

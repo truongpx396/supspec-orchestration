@@ -203,6 +203,6 @@ change, **split it**: land the behavior change as a story, then refactor under k
 
 Refactor mode is still **one branch, one worktree**. Its parallelism is confined to the read-only
 characterization-test *generation* phase; the transform, review, and convergence are serial. It is
-**not** a substitute for `executing-parallel-tracks` (worktree-per-track): a parallel orchestrator may
+**not** a substitute for `sso-executing-parallel-tracks` (worktree-per-track): a parallel orchestrator may
 dispatch one refactor-mode run per independent refactor track, each holding its own frozen green suite
 in its own worktree.

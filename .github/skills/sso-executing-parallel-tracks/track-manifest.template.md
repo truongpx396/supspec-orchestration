@@ -1,6 +1,6 @@
 # Parallel Tracks Orchestrator Manifest — <PROJECT NAME>
 
-Orchestrator-level configuration for the `executing-parallel-tracks` skill.
+Orchestrator-level configuration for the `sso-executing-parallel-tracks` skill.
 This file holds **only** project-wide defaults and shared constraints — nothing
 specific to any individual track. Per-track details (branch, worktree path, task
 list, owned paths) live in the **wave dispatch file** generated at Step 0.

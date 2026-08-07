@@ -254,6 +254,6 @@ success-criterion. Foundational and user-story stages are almost entirely behavi
 ## Composition
 
 Scaffold mode is still **one branch, one worktree**. It is *not* a substitute for
-`executing-parallel-tracks` (worktree-per-track) — its parallelism is confined to the read-only
+`sso-executing-parallel-tracks` (worktree-per-track) — its parallelism is confined to the read-only
 generation phase and its landing is serial. A parallel orchestrator may still dispatch one
 scaffold-mode run as a track's bootstrap step, then fan out behavioral tracks via story mode.

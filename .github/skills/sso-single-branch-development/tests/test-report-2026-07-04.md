@@ -1,4 +1,4 @@
-# Test Report — single-branch-development Skill
+# Test Report — sso-single-branch-development Skill
 
 > **Historical snapshot — not the current result.** This report records one manual run, on
 > 2026-07-04, in a *different* repo (`aisat-studio`), at 66 assertions. The suite is now **148
@@ -183,7 +183,7 @@ fingerprint contract is exercised end-to-end.
 
 **Severity**: Critical  
 **Files fixed**:
-- `.github/skills/single-branch-development/scripts/track-reconcile.sh`
+- `.github/skills/sso-single-branch-development/scripts/track-reconcile.sh`
 - `.github/hooks/track-reconcile.sh`
 
 **Problem**

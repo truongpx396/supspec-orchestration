@@ -121,7 +121,7 @@ jobs:
             mark "PR author '$AUTHOR' is a bot"
           fi
 
-          # 4 — an agent branch prefix (executing-parallel-tracks worktrees and similar).
+          # 4 — an agent branch prefix (sso-executing-parallel-tracks worktrees and similar).
           if printf '%s' "${HEAD_REF:-}" | grep -qiE "$AGENT_BRANCH_RE"; then
             mark "head branch '$HEAD_REF' matches the agent branch pattern"
           fi

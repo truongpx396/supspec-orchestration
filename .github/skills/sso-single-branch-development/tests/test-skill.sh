@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# test-skill.sh — Regression suite for the single-branch-development hooks bundle.
+# test-skill.sh — Regression suite for the sso-single-branch-development hooks bundle.
 #
 # Tests: track-preflight, track-reconcile, track-guard, track-evidence (producer),
 #        track-evidence-gate, track-meter, track-trace, track-report, track-sentinel,
@@ -14,8 +14,8 @@
 # Run automatically on every push/PR by .github/workflows/skill-tests.yml.
 #
 # Usage:
-#   bash .github/skills/single-branch-development/tests/test-skill.sh
-#   bash tests/test-skill.sh          # from inside single-branch-development/ dir
+#   bash .github/skills/sso-single-branch-development/tests/test-skill.sh
+#   bash tests/test-skill.sh          # from inside sso-single-branch-development/ dir
 #
 # Requirements: bash, jq, git (gh auth bypassed via PREFLIGHT_REQUIRE_GH=0).
 # Side-effects: temp branch + temp runs/ dir; cleaned up on exit.
@@ -152,7 +152,7 @@ else
 fi
 
 # --- confirm waiver (--yes / AUTO_CONFIRM) -------------------------------------
-# The SBD confirm is a HUMAN gate. A worker dispatched by executing-parallel-tracks has
+# The SBD confirm is a HUMAN gate. A worker dispatched by sso-executing-parallel-tracks has
 # no human, so without an explicit waiver it either hangs or self-approves. These pin the
 # contract: waived only when asked, always recorded, and never able to waive a prereq.
 result=$(TRACK_ID=tst-confirm TRACK_BASE_REF=main PREFLIGHT_REQUIRE_GH=0 \
@@ -1749,7 +1749,7 @@ RPT_REPO="$(mktemp -d)"
   cat > "runs/$RID.json" <<JSON
 {"run_id":"$RID","v":1,"tool_calls":42,"started_ts":"2026-01-02T03:00:05Z","last_ts":"2026-01-02T03:47:55Z","iterations":3,
  "trace":[{"t":"2026-01-02T03:05Z","kind":"subagent","event":"SubagentStart","agent_id":"s1","agent_type":"Explore"}],
- "skills":[{"t":"2026-01-02T03:01Z","skill":"single-branch-development","step":"scaffold","self_reported":true}],
+ "skills":[{"t":"2026-01-02T03:01Z","skill":"sso-single-branch-development","step":"scaffold","self_reported":true}],
  "evidence":[{"kind":"go-test","cmd":"go test ./...","response":"ok pkg","fingerprint":"abc123def456ghi"},{"kind":"py","cmd":"uv run pytest","response":"1 failed\nAssertionError","fingerprint":"abc123def456ghi"}]}
 JSON
 )
@@ -2542,7 +2542,7 @@ rm -rf "$_DEPS_TMP"
 # ---------------------------------------------------------------------------
 TOTAL=$((PASS + FAIL + SKIP))
 printf '\n===============================================\n'
-printf '  single-branch-development  test suite\n'
+printf '  sso-single-branch-development  test suite\n'
 printf '  Date:   %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 printf '  Branch: %s\n' "$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
 printf '  Total: %d   passed: %d   failed: %d   skipped: %d\n' \

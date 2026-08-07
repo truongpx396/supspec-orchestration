@@ -198,5 +198,5 @@ genuinely non-behavioral config).
 
 Story mode is still **one branch, one worktree**. Its parallelism is confined to the read-only RED
 *generation* phase; RED review, green, and convergence are serial. It is **not** a substitute for
-`executing-parallel-tracks` (worktree-per-track): a parallel orchestrator may dispatch one story-mode
+`sso-executing-parallel-tracks` (worktree-per-track): a parallel orchestrator may dispatch one story-mode
 run per user-story track, each greening its own frozen RED suite in its own worktree.

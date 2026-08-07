@@ -1,20 +1,20 @@
 ---
-name: executing-parallel-tracks
-version: 0.1.1
+name: sso-executing-parallel-tracks
+version: 0.2.0
 description: 'Orchestrate multiple independent implementation tracks in parallel, each in its own
 git worktree, fully autonomously from implement through review, verification, and pull request.
 Use when asked to "run tracks in parallel", "execute track 1, 2, 3", "spawn parallel agents",
 "fan out user stories", or to run several isolated work-streams concurrently with TDD, evidence
 gates, and merge-queue integration. Reads a per-repo Parallel Tracks Orchestrator Manifest for project specifics and
 composes the using-git-worktrees, dispatching-parallel-agents, and
-single-branch-development skills with strict parallel-only overlays.'
+sso-single-branch-development skills with strict parallel-only overlays.'
 ---
 
 # Executing Parallel Tracks
 
 Portable orchestration for running N independent implementation tracks concurrently. This skill is
 the **conductor**: it owns isolation, gates, traceability, and integration sequencing, and delegates
-the per-track implement/review/verify work to `single-branch-development`. All project-specific facts
+the per-track implement/review/verify work to `sso-single-branch-development`. All project-specific facts
 (which tasks belong to which track, file ownership, build commands, concurrency cap) live in a
 per-repo Parallel Tracks Orchestrator Manifest at `.github/tracks/manifest.md` — never hardcode them here.
 
@@ -36,14 +36,14 @@ budget remaining, run registry) lives in the session executing it.
 - A repo has a Parallel Tracks Orchestrator Manifest at `.github/tracks/manifest.md` (or an equivalent dispatch/tasks document) defining the tracks.
 
 Do **not** use this for tightly-coupled tasks that share mutable files — run those serially with
-`single-branch-development` instead.
+`sso-single-branch-development` instead.
 
 ## Prerequisites
 
 - `git` with worktree support; a remote configured for PRs (`gh` CLI authenticated for `gh pr create`).
 - Docker available if tracks run integration suites (Testcontainers).
 - A repo Parallel Tracks Orchestrator Manifest resolved (see [Manifest contract](#manifest-contract)). If absent, generate one from the repo's tasks/dispatch doc and confirm with the user before proceeding.
-- These skills installed and composable: `using-git-worktrees`, `dispatching-parallel-agents`, `single-branch-development`.
+- These skills installed and composable: `using-git-worktrees`, `dispatching-parallel-agents`, `sso-single-branch-development`.
 - *(Optional but recommended)* `jq` available and Copilot [agent hooks](https://docs.github.com/en/copilot/concepts/agents/hooks) enabled, to make the gates mechanical rather than prompt-trusted (see [Deterministic enforcement via Copilot agent hooks](#deterministic-enforcement-via-copilot-agent-hooks)). Hooks may be disabled by enterprise policy — fall back to prompt-enforced gates if so.
 
 ## Autonomy boundary (read first)
@@ -167,7 +167,7 @@ exactly one of:
 
 Only `success` opens a PR. The other three write a run record — `status` + `blocker` + `next_step` +
 `phase`, via `track-note.sh status` — and route to the orchestrator. These are the **same four states
-`single-branch-development` defines**, so a solo run and a fleet worker report identically.
+`sso-single-branch-development` defines**, so a solo run and a fleet worker report identically.
 
 ## Deterministic enforcement via agent hooks (Copilot or Claude Code)
 
@@ -175,11 +175,11 @@ The per-branch gates become **mechanical** through agent
 [hooks](https://docs.github.com/en/copilot/concepts/agents/hooks) — shell commands that run at
 lifecycle points (`PreToolUse`, `PostToolUse`, `SubagentStart`/`SubagentStop`, `Stop`) and can
 **block a tool call before it happens**. The bundle —
-[`scripts/track-*.sh`](../single-branch-development/scripts/) plus a per-surface wiring manifest
-([`track-hooks.json`](../single-branch-development/templates/track-hooks.json) for Copilot,
-[`claude-settings.json`](../single-branch-development/templates/claude-settings.json) for **Claude
-Code**) — is **owned and documented by `single-branch-development`**
-([`references/hooks.md`](../single-branch-development/references/hooks.md#running-under-claude-code)
+[`scripts/track-*.sh`](../sso-single-branch-development/scripts/) plus a per-surface wiring manifest
+([`track-hooks.json`](../sso-single-branch-development/templates/track-hooks.json) for Copilot,
+[`claude-settings.json`](../sso-single-branch-development/templates/claude-settings.json) for **Claude
+Code**) — is **owned and documented by `sso-single-branch-development`**
+([`references/hooks.md`](../sso-single-branch-development/references/hooks.md#running-under-claude-code)
 covers what each script enforces, the per-event wiring, the Claude Code specifics, and
 `install-hooks.sh --surface {copilot|claude|both}`). The scripts are surface-agnostic. This
 orchestrator reuses that *identical* bundle and adds only the **parallel-only configuration**: a
@@ -277,7 +277,7 @@ Export the manifest's per-track Docker/DB namespace before any integration run (
 ### 3. Fan out (one autonomous worker per track)
 
 Use `dispatching-parallel-agents` to launch one worker per track. Each worker executes
-`single-branch-development` **inside its own worktree only** for the per-branch pipeline. Each
+`sso-single-branch-development` **inside its own worktree only** for the per-branch pipeline. Each
 worker selects its own execution core from the task shape — **scaffold** (non-behavioral bootstrap),
 **story** (phased TDD for new/changed behavior), or **refactor** (behavior-preserving keep-green) —
 then runs preflight → isolate → core → evidence gate → draft-PR handoff. Mixed-mode fleets are fine
@@ -289,7 +289,7 @@ before launch (per-track + global) exactly as
 [Deterministic enforcement](#deterministic-enforcement-via-copilot-agent-hooks) describes.
 
 **Pass `--yes` (or `AUTO_CONFIRM=1`) to every worker's preflight — this is mandatory, not optional.**
-`single-branch-development` requires a *human* to approve its preflight summary before anything is
+`sso-single-branch-development` requires a *human* to approve its preflight summary before anything is
 created. A dispatched worker has no human on the other end, so without the waiver each worker either
 blocks forever waiting for an answer that cannot arrive, or silently grants itself the approval — and
 N workers each making that call independently is worse than either. The waiver is legitimate here and
@@ -308,14 +308,14 @@ This orchestrator then applies the stricter parallel-only overlays:
 ### 4. Per-track finish → DRAFT PR (autonomous, success only)
 
 Only a `success` run reaches this step. The worker opens a **draft** PR as the final step of
-`single-branch-development`, building the body from [`templates/pr-body.md`](../single-branch-development/templates/pr-body.md)
-with its **Auto** block rendered by [`track-report.sh`](../single-branch-development/scripts/track-report.sh)
+`sso-single-branch-development`, building the body from [`templates/pr-body.md`](../sso-single-branch-development/templates/pr-body.md)
+with its **Auto** block rendered by [`track-report.sh`](../sso-single-branch-development/scripts/track-report.sh)
 (files changed, evidence + fingerprints, `tool_calls` / `trace[]`, token estimate — all from
 `runs/<run-id>.json`, never re-typed):
 ```bash
 gh pr create --draft \
   --title "track/<id> [run <run-id>]" \
-  --body "$(bash .github/skills/single-branch-development/scripts/track-report.sh <run-id>)" \
+  --body "$(bash .github/skills/sso-single-branch-development/scripts/track-report.sh <run-id>)" \
   --label agent-generated
 ```
 The PR body carries the run-id, the goal contract, and the pasted evidence (test output, cost) — the
@@ -367,7 +367,7 @@ Kind legend: 🧩 **skill** = runs in-session (reads a SKILL.md); 🤖 **subagen
 | 0 Analyze & plan waves | Read tasks.md / manifest → derive wave plan → confirm with user | (in-session reasoning) |
 | 1 Precheck | `track-wave-preflight.sh` (mint WAVE\_ID + persist wave dispatch) then `track-precheck.sh` (ownership overlap gate) | ⚙️ script |
 | 2 Isolate (one per track) | `using-git-worktrees` | 🧩 skill |
-| 3 Fan out (one worker per track) | `dispatching-parallel-agents` → N× **worker** subagents, each running `single-branch-development` **with `AUTO_CONFIRM=1`** | 🧩 skill → 🤖 subagents |
+| 3 Fan out (one worker per track) | `dispatching-parallel-agents` → N× **worker** subagents, each running `sso-single-branch-development` **with `AUTO_CONFIRM=1`** | 🧩 skill → 🤖 subagents |
 | 4 Per-track draft PR | `track-report.sh` builds Auto block → `gh pr create --draft` | ⚙️ script |
 | 5 Integration (merge gate) | CI + human / merge queue — **not the worker** | (CI/human) |
 | 6 Stale-PR bounce | re-dispatch to owning worker subagent | 🤖 subagent |
@@ -401,7 +401,7 @@ Start low; graduate only after weeks of clean runs.
 - **Frozen entrypoints** (`main.go` / `app.py`) must iterate a module registry; tracks self-register via their own files. Editing the entrypoint per track guarantees merge conflicts.
 - **Global budget > per-agent budget at N>1** — one runaway worker is cheap; ten are not. Enforce the fleet ceiling.
 - **A silent worker beats every count-based cap** — iteration, no-progress, and token caps only advance when the worker is *acting*; a hung/crashed/deadlocked worker freezes all three and looks identical to a slow-but-working one. Track **staleness** (`now − last_ts` from the run record's heartbeat), not just pass/fail, and enforce `TRACK_MAX_IDLE_SECS` orchestrator-side — a truly hung worker won't fire a hook to self-halt.
-- **A dispatched worker with no confirm waiver hangs on a question nobody will answer.** `single-branch-development` treats its preflight confirm as mandatory; pass `AUTO_CONFIRM=1`/`--yes` on every fan-out (see [Step 3](#3-fan-out-one-autonomous-worker-per-track)). The reverse error is worse: never let a *solo* run self-waive because "it felt automated."
+- **A dispatched worker with no confirm waiver hangs on a question nobody will answer.** `sso-single-branch-development` treats its preflight confirm as mandatory; pass `AUTO_CONFIRM=1`/`--yes` on every fan-out (see [Step 3](#3-fan-out-one-autonomous-worker-per-track)). The reverse error is worse: never let a *solo* run self-waive because "it felt automated."
 - **Your own context is the one nothing re-anchors.** Workers reconcile from their breadcrumbs; the orchestrator has only the [ledger](#orchestrator-ledger-do-this-first-keep-it-current). After a compaction, rebuild fleet state from `runs/*<wave-id>*` — a forgotten track leaks a worktree, a branch and a budget.
 - **Human review of MERGED code never leaves the loop** — no matter how good the adversarial verifier gets, "done" is still a claim, not a proof, and comprehension debt grows faster the more the fleet ships code you didn't write. The verifier gate lets you approve faster; it does not let you stop reading what landed on the default branch.
 - **Prefer CLIs over heavy MCP servers inside workers** — one broad MCP can burn ~20k+ tokens of a worker's context before it does any work, and context bloat is a top cause of quality decay, cost blowups, and earlier compaction over a long run. Give workers named CLIs (self-documenting via `--help`, ~zero context); reserve MCP for tools with no CLI equivalent. **Cap concurrency to the manifest value** too — Docker resource exhaustion shows up as flaky timeouts, misread as logic bugs.
@@ -409,7 +409,7 @@ Start low; graduate only after weeks of clean runs.
 - **Evidence, not assertion** — "all green" without pasted output is `NEEDS_CONTEXT`. The single most important gate.
 - **The run-id is the trace** — if it isn't in the branch/PR/commit/record, the run is untraceable. Stamp all four.
 - **VS Code ignores hook matchers** — a `PreToolUse` hook fires on EVERY tool call; branch on `tool_name` inside the script, never rely on a `"Edit|Write"` matcher to scope it.
-- **Tool names and input keys differ across surfaces** — VS Code uses `create_file`/`replace_string_in_file` with camelCase `tool_input.filePath`; Claude/CLI use `Write`/`Edit` with snake_case `file_path`. A portable guard script checks both ([`track-guard.sh`](../single-branch-development/scripts/track-guard.sh) does).
+- **Tool names and input keys differ across surfaces** — VS Code uses `create_file`/`replace_string_in_file` with camelCase `tool_input.filePath`; Claude/CLI use `Write`/`Edit` with snake_case `file_path`. A portable guard script checks both ([`track-guard.sh`](../sso-single-branch-development/scripts/track-guard.sh) does).
 - **The agent can edit hook scripts** — set `chat.tools.edits.autoApprove` to disallow editing hook scripts, or a worker can neutralize its own guard mid-run. Keep hooks < 5s; they block the agent synchronously.
 
 ## Troubleshooting
@@ -430,6 +430,6 @@ Start low; graduate only after weeks of clean runs.
   (required), `WAVE_TRACKS` (comma-separated, required for `--persist`), `WAVE_ID` (override, rare),
   `TRACK_BASE_REF`. Derives per-track RUN_IDs as `<wave-id>_<track-id>`.
 - [`scripts/track-precheck.sh`](scripts/track-precheck.sh) (bundled, parallel-only) — the mechanical Precheck overlap gate: reads a JSON array of `{id, prefixes}` on stdin, exits 0 when all tracks' ownership prefixes are mutually disjoint, or exit 2 with the exact colliding pair / config error (empty ownership, duplicate id). Run it in Step 1 before fan-out.
-- The Copilot agent-hook bundle is **owned by `single-branch-development`** ([`track-hooks.json`](../single-branch-development/templates/track-hooks.json) + [`scripts/track-*.sh`](../single-branch-development/scripts/)) and reused whole by every worker: `track-reconcile.sh` (SessionStart resume), `track-guard.sh` (PreToolUse ownership + push lockout), `track-evidence.sh` / `track-meter.sh` (PostToolUse evidence + tool-call ceiling), `track-trace.sh` (Subagent trace with per-spawn reason), `track-evidence-gate.sh` / `track-tokens.sh` / `track-sentinel.sh` / `track-notify.sh` (Stop: freshness gate, token estimate, secrets scan, webhook). Manual/CLI members: `track-preflight.sh` (mint/recover RUN_ID; `--yes` waiver), `track-report.sh` (deterministic PR-body Auto block), `track-note.sh` (`phase`/`governance`/`status` + optional skill/loop trace). This orchestrator reuses the bundle and layers per-track/global env on top. See [`references/hooks.md`](../single-branch-development/references/hooks.md) for the full per-script contract.
+- The Copilot agent-hook bundle is **owned by `sso-single-branch-development`** ([`track-hooks.json`](../sso-single-branch-development/templates/track-hooks.json) + [`scripts/track-*.sh`](../sso-single-branch-development/scripts/)) and reused whole by every worker: `track-reconcile.sh` (SessionStart resume), `track-guard.sh` (PreToolUse ownership + push lockout), `track-evidence.sh` / `track-meter.sh` (PostToolUse evidence + tool-call ceiling), `track-trace.sh` (Subagent trace with per-spawn reason), `track-evidence-gate.sh` / `track-tokens.sh` / `track-sentinel.sh` / `track-notify.sh` (Stop: freshness gate, token estimate, secrets scan, webhook). Manual/CLI members: `track-preflight.sh` (mint/recover RUN_ID; `--yes` waiver), `track-report.sh` (deterministic PR-body Auto block), `track-note.sh` (`phase`/`governance`/`status` + optional skill/loop trace). This orchestrator reuses the bundle and layers per-track/global env on top. See [`references/hooks.md`](../sso-single-branch-development/references/hooks.md) for the full per-script contract.
 - [Copilot agent hooks (GitHub Docs)](https://docs.github.com/en/copilot/concepts/agents/hooks) · [Agent hooks in VS Code](https://code.visualstudio.com/docs/copilot/customization/hooks) · [Hooks reference (per-event I/O schema)](https://code.visualstudio.com/docs/agents/reference/hooks-reference) — events, JSON I/O, exit codes, Claude/CLI cross-compatibility.
-- Composes: `using-git-worktrees`, `dispatching-parallel-agents`, `single-branch-development`.
+- Composes: `using-git-worktrees`, `dispatching-parallel-agents`, `sso-single-branch-development`.

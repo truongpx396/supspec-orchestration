@@ -8,6 +8,34 @@ contracts are still stabilizing — matching the convention used by
 Each skill's `SKILL.md` frontmatter carries its own `version` field; this file tracks the
 whole-repo release that ships them together.
 
+## [0.5.0] - 2026-08-07
+
+### Renamed the 3 orchestration skills with an `sso-` prefix
+
+- **`single-branch-development` → `sso-single-branch-development`** (0.2.2 → 0.3.0)
+- **`executing-parallel-tracks` → `sso-executing-parallel-tracks`** (0.1.1 → 0.2.0)
+- **`pr-review-feedback` → `sso-pr-review-feedback`** (0.1.0 → 0.2.0)
+
+Namespaces the catalog's own skills so they can't collide with a dependency skill vendored flat
+into `.claude/skills/` (see below) or with a future third-party skill of the same generic name.
+Directories, `SKILL.md` `name:` frontmatter, and every in-repo reference (install.sh, hooks,
+tests, workflows, docs) were updated together. Breaking: repos that invoke these by their old
+bare names (`/single-branch-development`, etc.) need to switch to the `sso-` prefixed form on
+their next install/update.
+
+### Fixed: vendored `superpowers` skills were undiscoverable by Claude Code
+
+`install.sh`'s dependency fetch cloned `obra/superpowers` and copied its `skills/` subtree into
+a `.claude/skills/superpowers/` wrapper directory, nesting all 14 superpowers skills two levels
+under `.claude/skills/`. Claude Code only discovers `SKILL.md` exactly one level deep
+(`.claude/skills/NAME/SKILL.md`) — see
+[anthropics/claude-code#28266](https://github.com/anthropics/claude-code/issues/28266) — so none
+of those 14 skills, including several this catalog's own skills delegate to by name
+(`dispatching-parallel-agents`, `using-git-worktrees`, `verification-before-completion`,
+`requesting-code-review`, `subagent-driven-development`, `test-driven-development`,
+`systematic-debugging`), actually resolved. `fetch_dep` now copies superpowers' skills flat into
+`.claude/skills/` (no wrapper directory) so each lands exactly one level deep.
+
 ## [0.4.1] - 2026-08-07
 
 Stale run state and guard false positives in `single-branch-development` (0.2.1 → 0.2.2), plus an
