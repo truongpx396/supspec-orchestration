@@ -11,9 +11,11 @@
 # Requires: jq. Keep runtime < 5s — hooks block the agent synchronously.
 #
 # Per-worktree scope (export BEFORE launching each worker):
-#   TRACK_ALLOWED_PREFIXES  colon-separated workspace-relative path prefixes this
-#                           track may edit, e.g.
-#                           "internal/ingest:migrations/0007_:test/ingest"
+#   TRACK_ALLOWED_PREFIXES  colon-separated path prefixes this track may edit, relative to
+#                           the git WORKTREE ROOT (never to the hook's CWD), e.g.
+#                           "internal/ingest:migrations/0007_:test/ingest".
+#                           A path outside every worktree stays absolute, so allowing a
+#                           scratch dir means listing it absolutely, e.g. "/tmp/scratch/".
 #   TRACK_FROZEN_PATHS      colon-separated exact files no track may edit, e.g.
 #                           "cmd/main.go:internal/app/app.go"
 #   TRACK_IMMUTABLE_PREFIXES  (optional) colon-separated prefixes whose
@@ -84,38 +86,48 @@ deny() {
 }
 
 # Normalize a tool-supplied path to a path relative to the git worktree ROOT it
-# belongs to. Paths UNDER $PWD keep the fast legacy strip (the agent's own
-# checkout — the common case). Only paths OUTSIDE $PWD get git-toplevel
-# resolution: that is the case this fix exists for — the isolated work lives in a
-# SIBLING git worktree while the agent (and $PWD) stay rooted in the main
-# checkout, so a plain $PWD-strip would leave an absolute path that never matches
-# TRACK_ALLOWED_PREFIXES and every scoped write would be denied (fail-closed),
-# forcing ungoverned terminal-heredoc writes. create_file targets may not exist
-# yet, so we resolve via the deepest existing ancestor's toplevel; falls back to
-# the $PWD-strip when the path is outside any git worktree. Side effect: sets
-# GIT_WT_ROOT to the discovered root so the banner and immutable-history checks
-# target the right tree.
+# belongs to. TRACK_ALLOWED_PREFIXES is written relative to the worktree root, so the
+# comparison is only meaningful against a root-relative path — and the hook's $PWD is
+# NOT a reliable stand-in for that root. Two ways it drifts, both observed in real runs:
+#
+#   * a sibling WORKTREE holds the isolated work while the agent (and $PWD) stay rooted
+#     in the main checkout, and
+#   * a plain `cd` into a subdirectory in an earlier Bash call — after which a $PWD-strip
+#     yields "contracts/agent-graph.md" for a file the scope names as
+#     "specs/001-x/contracts/agent-graph.md".
+#
+# Both end the same way: the relativized path never matches a prefix, every scoped write
+# is denied (fail-closed), and the pressure is toward ungoverned terminal-heredoc writes.
+# So resolve against the worktree root UNCONDITIONALLY — relative inputs included, since
+# a bare "contracts/x.md" typed from a subdirectory is exactly the case that used to slip
+# through. `git rev-parse --show-prefix` is git's own answer to "where am I inside this
+# worktree?", which also sidesteps the string-strip mismatch when a checkout is reached
+# through a symlink (/tmp on macOS) and git reports the physical path instead. create_file
+# targets — and their parent dirs — may not exist yet, so resolve from the deepest
+# EXISTING ancestor and re-attach the not-yet-created tail.
+#
+# Emits TWO lines: the discovered worktree root (may be empty) and the root-relative path.
+# The root has to come back through STDOUT rather than a global, because the caller reads
+# this function in a command substitution — a variable it sets dies with that subshell.
+# That is why the immutable-prefix check silently fell back to `$PWD` and stopped matching
+# whenever the hook's CWD was not the worktree root: exactly the sibling-worktree case the
+# root-tracking was added for, so the check quietly passed everything it was meant to stop.
 GIT_WT_ROOT=""
 _git_relpath() {
   p_in="$1"
-  GIT_WT_ROOT=""
   case "$p_in" in
-    /*) ;;                                   # absolute → normalize below
-    *)  printf '%s' "$p_in"; return ;;       # already relative → no-op
+    /*) ;;                                   # absolute → resolve below
+    *)  p_in="$PWD/$p_in" ;;                 # relative → make absolute, then resolve alike
   esac
-  case "$p_in" in
-    "$PWD"/*)                                # under the agent's checkout → legacy strip
-      GIT_WT_ROOT="$PWD"; printf '%s' "${p_in#"$PWD"/}"; return ;;
-  esac
-  d="$p_in"                                  # outside $PWD → likely a sibling worktree
-  while [ ! -e "$d" ] && [ "$d" != "/" ] && [ -n "$d" ]; do d="${d%/*}"; done
-  [ -z "$d" ] && d="/"
-  root="$(git -C "$d" rev-parse --show-toplevel 2>/dev/null || true)"
-  if [ -n "$root" ]; then
-    GIT_WT_ROOT="$root"
-    printf '%s' "${p_in#"$root"/}"
+  d="${p_in%/*}"; [ -n "$d" ] || d="/"       # dir part + the tail we must re-attach
+  tail="${p_in##*/}"
+  while [ ! -d "$d" ] && [ "$d" != "/" ] && [ -n "$d" ]; do
+    tail="${d##*/}/$tail"; d="${d%/*}"; [ -n "$d" ] || d="/"
+  done
+  if pfx="$(git -C "$d" rev-parse --show-prefix 2>/dev/null)"; then
+    printf '%s\n%s\n' "$(git -C "$d" rev-parse --show-toplevel 2>/dev/null || true)" "$pfx$tail"
   else
-    printf '%s' "${p_in#"$PWD"/}"            # fallback: legacy behavior
+    printf '%s\n%s\n' "" "${p_in#"$PWD"/}"   # outside any worktree → legacy behavior
   fi
 }
 
@@ -134,7 +146,10 @@ case "$tool" in
 
     while IFS= read -r p; do
       [ -z "$p" ] && continue
-      rel="$(_git_relpath "$p")"   # relative to the path's git worktree root (handles sibling worktrees)
+      # Root + relative path, both read back from stdout (see _git_relpath on why the root
+      # cannot be a global). GIT_WT_ROOT then aims the banner + immutable-history checks at
+      # the tree the path actually lives in, not at whatever the hook's CWD happens to be.
+      { IFS= read -r GIT_WT_ROOT; IFS= read -r rel; } <<<"$(_git_relpath "$p")"
 
       # Frozen entrypoints: never editable by any track (tracks self-register).
       saved_ifs="$IFS"; IFS=:
@@ -183,9 +198,28 @@ case "$tool" in
     # History rewrites, merges, and gate bypass are ALWAYS denied — even when
     # fast-forward push is opted in below (this catches `git push --force`).
     case "$cmd" in
-      *"gh pr merge"* | *"git merge "* | *"--force"* | *"--no-verify"* | *"git reset --hard"*)
+      *"gh pr merge"* | *"git merge "* | *"git reset --hard"*)
         deny "blocked by autonomy boundary: merging/rewriting history is the merge gate's job (human or merge queue), not the worker's." ;;
     esac
+    # `--force` / `--no-verify` are the flags that matter HERE, but neither spelling is
+    # git's alone: a raw substring match denies every unrelated tool that happens to take
+    # one (`specify integration install claude --force`, `npm ci --force`, `uv pip install
+    # --force-reinstall`) and explains itself with a message about rewriting git history
+    # that makes no sense for the command being run. That is a false positive with no
+    # in-bounds alternative, which is the shape of rule that gets worked around rather
+    # than obeyed. Scope the check to the segments that actually invoke git/gh — split on
+    # shell separators first, so `foo --force && git push --force` still trips on its
+    # SECOND segment and nothing is smuggled through in a compound command.
+    while IFS= read -r seg; do
+      case "$seg" in
+        *"git "* | *"gh "*) ;;
+        *) continue ;;
+      esac
+      case "$seg" in
+        *"--force"* | *"--no-verify"*)
+          deny "blocked by autonomy boundary: '--force'/'--no-verify' on a git/gh command ('$seg') — merging/rewriting history is the merge gate's job (human or merge queue), not the worker's. Non-git tools that take a --force flag are unaffected." ;;
+      esac
+    done <<<"$(printf '%s' "$cmd" | tr ';&|\n' '\n\n\n\n')"
     # `git push` lockout — workers normally stop at `gh pr create --draft`. Two
     # carve-outs, and nothing else gets through:
     #

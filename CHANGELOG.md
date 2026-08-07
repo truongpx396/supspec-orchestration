@@ -8,6 +8,97 @@ contracts are still stabilizing — matching the convention used by
 Each skill's `SKILL.md` frontmatter carries its own `version` field; this file tracks the
 whole-repo release that ships them together.
 
+## [0.4.1] - 2026-08-07
+
+Stale run state and guard false positives in `single-branch-development` (0.2.1 → 0.2.2), plus an
+`install.sh` pin that could silently not apply. Every item was reported from real consuming-repo
+sessions; the common thread is a gate that keeps firing after the thing it was protecting is gone.
+
+### Stale run state
+
+Reported from a real session
+in a consuming repo: a Stage-1 run that had halted days earlier was still governing an unrelated
+docs task on a different branch in a different worktree — the tool-call ceiling halted every `Bash`
+call, and the evidence gate demanded `go-test`/`py` for a markdown-only diff in a checkout with no
+`go.mod` at all. None of it was policy about the new task; all of it was one finished run that never
+let go.
+
+- **The managed `RUN_ID` block is now self-retiring** (`track-preflight.sh`). `--persist` used to
+  append an unconditional `export RUN_ID="${RUN_ID:-<id>}"` to the installed `track-env.sh`, and
+  `--complete` was its only removal path. Completion happens at draft-PR handoff *only*, so a run
+  that ended any other way — **ceiling trip, `blocked`, `budget-exceeded`, crash, human abandon** —
+  left that line behind permanently, and every later session in the checkout inherited a dead run's
+  identity. The block now adopts its id only while the run is **live** (no terminal `status` in the
+  record, no `completed_utc` on the breadcrumb) **and** the checkout is on the run's own branch. An
+  exported `RUN_ID` still outranks it, so orchestrator-dispatched workers are unaffected.
+  - The worst consequence was a **bricked checkout**: `track-meter.sh` re-read a record whose
+    `tool_calls` already exceeded `TRACK_MAX_TOOL_CALLS` and returned `continue:false` for *every*
+    subsequent tool call, in every session, unrecoverable without hand-editing the hook file.
+  - Second consequence: **a fresh start silently reused the finished run's id.** Preflight sources
+    `track-env.sh` during bootstrap, then treated any resulting `RUN_ID` as an explicit override, so
+    a new track in that checkout wrote into the old run's record. Only a **caller-exported** `RUN_ID`
+    counts as an override now; a file-supplied one is an activation hint and nothing more.
+- **`track-reconcile.sh` ranks breadcrumbs instead of taking the newest.** Self-recovery preferred
+  the newest `runs/*.dispatch` in the checkout, which adopts a finished run on an unrelated branch
+  exactly as readily as this session's own — and then the whole resume report describes the wrong
+  task. Order is now: the breadcrumb whose recorded `branch` is checked out here → any run not yet
+  stamped terminal → newest match (kept last so recovery is never weaker than before).
+- **`TRACK_EVIDENCE_SKIP_GLOBS` — a documentation-only escape for the evidence gate** (opt-in, ships
+  empty, no behavior change on upgrade). `TRACK_REQUIRED_EVIDENCE` is a floor required on *every*
+  diff by design, but a prose-only diff cannot change a go/py/ts result, so the floor demands of it
+  something no honest action can produce — and a gate satisfiable only dishonestly gets satisfied
+  dishonestly (re-run an unrelated suite, or waive the gate wholesale). When **every** path the diff
+  touches matches a declared non-code glob, the gate no-ops. All-or-nothing: one code file anywhere
+  in the diff restores the full requirement set, so it cannot smuggle code past the floor.
+- **`track-meter.sh`'s halt message names the way out.** The ceiling counts cumulatively for the run,
+  so the trip is sticky by design — but a sticky halt with no named exit reads as an unrecoverable
+  one. It now states the current count and both deliberate exits (raise `TRACK_MAX_TOOL_CALLS` above
+  it, or start a fresh run).
+- **`references/hooks.md`: a triage table for "a hook is blocking and I don't know why."** The three
+  gates read different inputs and fail independently: the guard's writable scope is **not** keyed to
+  `RUN_ID`, so clearing the run state does nothing for a scope denial — the most common wrong turn,
+  since all three trip together and look like one policy. Includes the commands that show what the
+  hooks actually resolved, and how to tell leftover run state from a real constraint.
+### Guard false positives — two rules with no in-bounds alternative
+
+Both reported from the same consuming repo. A rule that denies a legitimate action while naming no
+compliant path does not produce compliance; it produces workarounds.
+
+- **`--force` / `--no-verify` are now matched only on git/gh commands.** The pattern was a raw
+  substring match meant to catch `git push --force`, so it also denied
+  `specify integration install claude --force`, `npm ci --force`, and `uv pip install
+  --force-reinstall` — each with a message about rewriting git history that made no sense for the
+  command being run. The check now splits the command on shell separators and applies only to
+  segments that invoke `git`/`gh`, so `foo --force && git push --force` still trips on its second
+  segment and nothing is smuggled through a compound command.
+- **Scope prefixes no longer depend on the hook's CWD.** `TRACK_ALLOWED_PREFIXES` is
+  worktree-relative, but the guard stripped `$PWD` for any path underneath it — so after a `cd` into
+  a subdirectory, an edit to `specs/001-x/contracts/agent-graph.md` relativized to
+  `contracts/agent-graph.md`, matched nothing, and was denied. Same failure as the sibling-worktree
+  case flagged earlier, reached via `cd` instead. Every path — relative inputs included — now
+  resolves through `git rev-parse --show-prefix`, which is also immune to the string-strip mismatch
+  when a checkout is reached through a symlink (`/tmp` on macOS).
+- **The immutable-prefix check was silently inert outside the worktree root.** `_git_relpath` set
+  `GIT_WT_ROOT` as a side effect, but callers read it in a command substitution, so the assignment
+  died with the subshell and the check fell back to `$PWD` — meaning it stopped matching in exactly
+  the sibling-worktree case the root-tracking was added for, and quietly allowed edits to committed
+  migrations. The root now comes back through stdout. The one test that would have caught this had
+  been **silently skipping** since it was written, because its fixture path was built from the
+  bundle's `.github/` dir rather than the git root; the suite now reports **0 skipped**.
+
+### `install.sh`
+
+- **A `specify integration install` no-op is no longer reported as a successful version pin.** The
+  CLI is idempotent and `--force` does not change that: on a repo that already has the integration
+  it prints `Integration '<key>' is already installed … No files were changed` and exits 0. The
+  installer checked only the exit code, so it printed `✓ installed speckit skills` while the pinned
+  version never applied. It now detects the no-op, escalates to `specify integration upgrade` (same
+  flags, diff-aware), and **verifies the result** by reading `version` and `installed_integrations`
+  back out of `.specify/integration.json` — reporting a mismatch instead of swallowing it.
+
+- 33 new regression tests (284 total, **0 failing, 0 skipped**), including the end-to-end
+  bricked-checkout case and the `--force` allow/deny matrix.
+
 ## [0.4.0] - 2026-08-07
 
 Installer cleanup: `speckit` was vendored as a full repo clone, and a dual-surface install wrote the

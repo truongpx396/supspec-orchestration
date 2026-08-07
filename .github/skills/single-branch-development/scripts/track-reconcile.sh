@@ -112,12 +112,36 @@ if [ -z "${RUN_ID:-}" ]; then
 "
   done <<<"$(find "$RUNS_DIR" -maxdepth 1 -type f -name '*.dispatch' 2>/dev/null || true)"
   sorted="$(printf '%s' "$sorted" | sort -rn)"
+  # Rank the candidates instead of taking the newest outright. "Newest breadcrumb in the
+  # checkout" adopts a FINISHED run on an unrelated branch exactly as readily as this
+  # session's own, and every line of the report below then describes the wrong task — the
+  # same stale-state failure the managed RUN_ID block guards against. Preference order,
+  # newest-first within each tier: (1) a run whose recorded branch is the one actually
+  # checked out here, (2) any run not yet stamped terminal, (3) whatever matched — tier 3
+  # keeps the recovery no weaker than it was before.
+  head_branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+  pick_branch=""; pick_open=""; pick_any=""
   while IFS="$(printf '\t')" read -r _ f; do
     [ -n "${f:-}" ] || continue
-    if [ -z "$want_track" ] || [ "$(jq -r '.track // empty' "$f" 2>/dev/null || true)" = "$want_track" ]; then
-      RUN_ID="$(jq -r '.run_id // empty' "$f" 2>/dev/null)"; break
+    if [ -n "$want_track" ] && [ "$(jq -r '.track // empty' "$f" 2>/dev/null || true)" != "$want_track" ]; then
+      continue
+    fi
+    cand="$(jq -r '.run_id // empty' "$f" 2>/dev/null || true)"
+    [ -n "$cand" ] || continue
+    [ -n "$pick_any" ] || pick_any="$cand"
+    if [ -z "$pick_branch" ] && [ -n "$head_branch" ] \
+       && [ "$(jq -r '.branch // empty' "$f" 2>/dev/null || true)" = "$head_branch" ]; then
+      pick_branch="$cand"
+    fi
+    if [ -z "$pick_open" ]; then
+      # Terminal = completed at PR handoff, or a status written by meter/tokens/note.
+      if [ -z "$(jq -r '.completed_utc // empty' "$f" 2>/dev/null || true)" ] \
+         && [ -z "$(jq -r '.status // empty' "$RUNS_DIR/$cand.json" 2>/dev/null || true)" ]; then
+        pick_open="$cand"
+      fi
     fi
   done <<<"$sorted"
+  RUN_ID="${pick_branch:-${pick_open:-$pick_any}}"
 fi
 
 # Opt-in / no-op: nothing to reconcile without a RUN_ID (none given, none recoverable).
