@@ -19,14 +19,20 @@ Key characteristics:
 
 ## Directory Structure
 
-Skills are stored in specific locations:
+Skills are stored in specific locations. **Which path is canonical depends on the agent surface, not
+on recency** — `.claude/skills/` is the primary location for Claude Code, while `.github/skills/` is
+the primary location for Copilot:
 
-| Location | Scope | Recommendation |
-|----------|-------|----------------|
-| `.github/skills/<skill-name>/` | Project/repository | Recommended for project skills |
-| `.claude/skills/<skill-name>/` | Project/repository | Legacy, for backward compatibility |
-| `~/.github/skills/<skill-name>/` | Personal (user-wide) | Recommended for personal skills |
-| `~/.claude/skills/<skill-name>/` | Personal (user-wide) | Legacy, for backward compatibility |
+| Location | Scope | Primary for |
+|----------|-------|-------------|
+| `.github/skills/<skill-name>/` | Project/repository | GitHub Copilot (VS Code, CLI, coding agent) |
+| `.claude/skills/<skill-name>/` | Project/repository | Claude Code |
+| `~/.github/skills/<skill-name>/` | Personal (user-wide) | GitHub Copilot |
+| `~/.claude/skills/<skill-name>/` | Personal (user-wide) | Claude Code |
+
+Copilot also reads `.claude/skills/` for backward compatibility, so a single skill directory can
+serve both surfaces. For a skill that must work on both, install to both paths (or symlink one to the
+other) rather than assuming either agent will find the other's directory.
 
 Each skill **must** have its own subdirectory containing at minimum a `SKILL.md` file.
 
@@ -37,6 +43,7 @@ Each skill **must** have its own subdirectory containing at minimum a `SKILL.md`
 ```yaml
 ---
 name: webapp-testing
+version: 0.2.0
 description: 'Toolkit for testing local web applications using Playwright. Use when asked to
 verify frontend functionality, debug UI behavior, capture browser screenshots,
 check for visual regressions, or view browser console logs. Supports Chrome,
@@ -49,7 +56,12 @@ license: Complete terms in LICENSE.txt
 |-------|----------|-------------|
 | `name` | Yes | Lowercase, hyphens for spaces, max 64 characters (e.g., `webapp-testing`) |
 | `description` | Yes | 10–1024 characters, clear capabilities AND use cases, wrapped in single quotes |
+| `version` | No | Semver (`MAJOR.MINOR.PATCH`). Recommended for any skill that is distributed or installed into other repos — it is the only way a consumer can tell which revision they have |
 | `license` | No | Reference to LICENSE.txt (e.g., `Complete terms in LICENSE.txt`) or SPDX identifier |
+
+Unrecognized front-matter keys are ignored by the agent rather than rejected, so a field like
+`version` is safe to add. Only `name` and `description` affect discovery — everything else is metadata
+for humans and installers.
 
 ### Description Best Practices
 
@@ -362,6 +374,7 @@ Before publishing a skill:
 
 - [ ] `SKILL.md` has valid frontmatter with `name` and `description`
 - [ ] `name` is lowercase with hyphens, ≤64 characters
+- [ ] `version` set (semver) if the skill is distributed or installed into other repos
 - [ ] `description` clearly states **WHAT** it does, **WHEN** to use it, and relevant **KEYWORDS**
 - [ ] `description` is concise and keyword-dense (respects context budget)
 - [ ] Body focuses on information Copilot wouldn't know from training data

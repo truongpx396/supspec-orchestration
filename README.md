@@ -170,7 +170,12 @@ A thin **per-branch bracket** (isolation before, evidence gate + draft-PR bounda
 
 All modes share: `using-git-worktrees` (isolation), `verification-before-completion` (evidence gate), `requesting-code-review` (self-review), and the full hooks bundle.
 
-> **Governance note.** `requesting-code-review` dispatches a reviewer subagent that automatically inherits any `.github/instructions/*.instructions.md` file whose `applyTo` glob matches the changed files — so `code-review-generic.instructions.md` (`applyTo: '**'`) is always in scope, and language/framework-specific instructions (`go.instructions.md`, `reactjs.instructions.md`, …) apply whenever the diff touches matching paths. No extra wiring needed.
+> **Governance note.** Instruction files reach the work in two different ways, and the split is deliberate.
+>
+> - **Authoring-time (maker) constraints** — every `.github/instructions/*.instructions.md` whose `applyTo` glob matches the changed files (`go.instructions.md` for `**/*.go`, `agent-skills.instructions.md` for `**/skills/**/SKILL.md`, …). The skill's Step 4 discovers these by *listing the directory and matching globs at run time*, distils them, and embeds the content in every maker brief. `track-audit.sh` check **G2** re-derives the same matched set and fails a run whose bundle omits one.
+> - **Review-time rubric** — `code-review-generic.instructions.md` carries **no `applyTo`**, so it is never auto-injected while code is written. It is loaded at the review step and embedded in the `requesting-code-review` / stage-2 reviewer brief. This keeps ~400 lines of generic rubric out of every implementation brief, where it only restated the language files.
+>
+> Editor `applyTo` injection populates the main session only and never propagates into a dispatched subagent (and Claude Code does not auto-inject at all), which is why the skill passes **content** rather than relying on inheritance — the behavior is then identical on both surfaces.
 
 ### 🪢 sso-executing-parallel-tracks
 The **conductor**: owns isolation, gates, traceability, and integration sequencing; delegates each track's implement/review/verify to `sso-single-branch-development`. Starts with a dependency-aware wave analysis (Step 0) that derives a wave plan and requires your confirmation before spawning any worker.
@@ -493,16 +498,17 @@ Grep any one surface → reconstruct the whole run. `runs/summary.md` aggregates
   workflows/                          # CI
     skill-tests.yml                   # run both self-test suites on every push/PR
     agent-pr-audit.yml                # audit agent-authored PRs for a present, fresh Auto block
-  instructions/                       # governance gate — applied by every review step
-    security-and-owasp.instructions.md
+  instructions/                       # reusable tech-stack guidelines — matched by applyTo glob
+    security-and-owasp.instructions.md   # applyTo '**' — always in scope
+    ai-agent-security.instructions.md    # agentic surface: tools, MCP, memory, budgets (ASI01–ASI10)
     go.instructions.md
     python.instructions.md
     reactjs.instructions.md
     state-management.instructions.md
-    code-review-generic.instructions.md
-    backing-services.instructions.md  # PostgreSQL, Redis, NATS, Qdrant, MinIO, Casdoor, Caddy
+    backing-services.instructions.md  # PostgreSQL, Redis, NATS, Qdrant, MinIO, OIDC, Caddy
     devops-cicd.instructions.md       # Docker, Compose, Makefile, GitHub Actions
     agent-skills.instructions.md      # authoring guidelines for SKILL.md files
+    code-review-generic.instructions.md  # no applyTo — loaded only at the review step
   skills/
     sso-single-branch-development/
       SKILL.md
