@@ -10,6 +10,36 @@ whole-repo release that ships them together.
 
 ## [0.6.0] - 2026-08-08
 
+### Instructions bundle: de-project-ified, review rubric scoped, agentic security added
+
+The `.github/instructions/*` files ship as reusable governance to client repos via `install.sh`, but
+five of them (`backing-services`, `devops-cicd`, `python`, `reactjs`, `state-management`) named a
+specific internal project (`AISAT-STUDIO`) and asserted a specific stack (Vite SPA, UV-only Python) —
+wrong for any other repo installing this bundle. Project-specific framing is stripped while the worked
+examples stay.
+
+- **`code-review-generic.instructions.md` is now review-step-only.** It carried no `applyTo` yet
+  `governance.md`/`SKILL.md` treated it as always-in-scope — duplicating the language files (~400
+  lines/brief) and conflicting with `security-and-owasp` on the one surface with no stated precedence.
+  It's now loaded by `requesting-code-review` instead of being injected during authoring; `governance.md`
+  and `SKILL.md` were updated to match.
+- **11 detection regexes in `security-and-owasp` were unverified against their own BAD/GOOD
+  examples** — several never matched what they claimed to catch (`I1`, `S3`), one had a
+  negative-lookahead-after-`.*` that's trivially satisfiable (`AU8`, `FE3`), one matched any line
+  mentioning `cors` (`H8`). Rewrote and verified all 11 with a 48-assertion PCRE harness.
+- **`governance.md`'s instruction-file enumeration was a hardcoded list that had already drifted**
+  (missing `agent-skills.instructions.md`) — replaced with "list the directory, match `applyTo` globs
+  at run time," matching how `track-audit.sh`'s `G2` check actually works.
+- **New: `ai-agent-security.instructions.md`.** This repo's own skills are an agentic system (tool
+  dispatch, subagent delegation, evidence hooks), and the existing security file's `AI1`-`AI3` cover
+  single-turn LLM apps only — no coverage for tool scoping, MCP/third-party trust, agent identity,
+  memory/RAG poisoning, inter-agent auth, approval gates, or token/cost ceilings. Structured around
+  OWASP ASI01-ASI10 (Top 10 for Agentic Applications) and the OWASP AI Agent Security Cheat Sheet's 9
+  control domains, with its own verified Detection regexes and a CI/CD section covering the GitHub
+  Actions script-injection pattern `agent-pr-audit.yml` already guards against.
+- `agent-skills.instructions.md` no longer calls `.claude/skills/` "Legacy" (it's primary for Claude
+  Code now) and its frontmatter table documents `version:`, which all three shipped skills use.
+
 ### The governance bundle now has to reach the brief — mechanically (`sso-single-branch-development` 0.3.0 → 0.4.0)
 
 Every governance check in this pipeline was a **proxy** for one hop nobody watched. `G1` proved the
@@ -61,6 +91,20 @@ seeded bundle "incomplete" and flipped `G2` to FAIL, taking down every clean-run
 unrelated to the change. The section now runs from an isolated fixture repo with a neutral diff;
 `G2`/`G4`/`G5`/`G6`'s own positive and negative paths are asserted in purpose-built repos where the
 diff *is* the fixture. Suite: 284 → **310** tests.
+
+### Fixed: multi-line evidence commands corrupted the PR body table (`sso-single-branch-development` 0.4.0 → 0.4.1)
+
+A captured Bash tool call can be a whole multi-line shell block (cd / setup / debug / the real test
+invocation), not a one-liner. `track-evidence.sh` was recording that whole block verbatim as the
+evidence `cmd`, and `track-report.sh` dropped it straight into a GFM table cell — a literal newline
+ends a markdown table row, so everything after the first line lost its `|` delimiters and rendered as
+an unstructured text blob with no visible Command/Result/Fingerprint columns.
+
+`track-evidence.sh` now picks the single line that actually matched the evidence pattern (reusing the
+same quote/heredoc-stripped text already used to decide a match, so decorative echoes and quoted
+mentions are still correctly ignored) and stores it as `cmd`, keeping the full raw block as `cmd_full`
+only when it differs so nothing is lost for an audit that wants the whole picture. `track-report.sh`
+also collapses any remaining multi-line `cmd` at render time as a defensive fallback.
 
 ## [0.5.0] - 2026-08-07
 
