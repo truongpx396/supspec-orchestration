@@ -1,11 +1,38 @@
 ---
-description: 'Guidelines for creating high-quality Agent Skills for GitHub Copilot'
-applyTo: '**/skills/**/SKILL.md'
+description: 'Authoring guide for Agent Skills (SKILL.md) — structure, frontmatter, progressive disclosure, bundled resources, validation checklist. Read on demand when a human is designing or authoring a skill; carries no applyTo, so it is never auto-injected and G2 never requires it.'
 ---
 
 # Agent Skills File Guidelines
 
 Instructions for creating effective and portable Agent Skills that enhance GitHub Copilot with specialized capabilities, workflows, and bundled resources.
+
+## Scope — When This File Is Loaded
+
+**This is a design-time authoring guide, invoked explicitly. It is not a standing constraint on any
+diff that happens to touch a `SKILL.md`.** It carries **no `applyTo` glob** — the second file in
+`.github/instructions/` deliberately in that category, alongside
+[code-review-generic.instructions.md](./code-review-generic.instructions.md) — so it is never
+auto-injected by an editor, never part of the `applyTo`-matched governance bundle, and never required
+by `track-audit.sh` check **G2**.
+
+**Read it when you are designing or authoring a skill** — a human asking for a new skill, a
+restructure of an existing one, or a review of whether a skill's shape is right. That is a deliberate
+act: name this file, read it, then build. Do not expect it to arrive on its own.
+
+Why it is scoped this way:
+
+- **The trigger is the intent, not the path.** Most diffs that touch a `SKILL.md` are ordinary edits —
+  fixing a step, correcting a command, updating a version. Those need the surrounding repo's
+  conventions, not ~19k tokens of guidance on how to structure a skill from scratch.
+- **It is a manual, not a rule set.** Directory layouts, frontmatter templates, bundling patterns, and
+  a validation checklist are reference material you consult while designing. In an implementation
+  brief for an unrelated change they are pure context pressure — the same reasoning that keeps the
+  review rubric out of the maker phase.
+
+**Related:** [ai-agent-engineering.instructions.md](./ai-agent-engineering.instructions.md) (how the
+agent around the skill should be built) and
+[ai-agent-security.instructions.md](./ai-agent-security.instructions.md) (both **do** carry `applyTo`
+globs that match `**/skills/**/SKILL.md`, and both remain in scope for skill work).
 
 ## What Are Agent Skills?
 

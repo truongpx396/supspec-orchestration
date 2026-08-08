@@ -65,7 +65,7 @@ env:
   META_PATHS_RE: '^(\.github/(skills|workflows|instructions|hooks)/|README\.md$|CHANGELOG\.md$|CLAUDE\.md$|\.gitignore$|install\.sh$)'
   # The subset of tooling that IS the enforcement. A waived PR touching these is weakening
   # the gates while exempt from them, so the waiver names it explicitly.
-  GATE_PATHS_RE: '(track-audit\.sh|track-report\.sh|track-compact\.sh|track-evidence-gate\.sh|track-guard\.sh|agent-pr-audit\.yml)'
+  GATE_PATHS_RE: '(track-audit\.sh|track-report\.sh|track-compact\.sh|track-brief\.sh|track-evidence-gate\.sh|track-guard\.sh|agent-pr-audit\.yml)'
 
 jobs:
   # ── Is this an agent PR? Decided from signals the agent does not all control. ──────────

@@ -131,7 +131,10 @@ Apply this section only when the project builds LLM-backed features; skip it oth
 > For the security half of this surface — tool scoping, MCP trust, agent identity, memory/RAG
 > poisoning, approval gates, token/cost ceilings — follow
 > [ai-agent-security.instructions.md](./ai-agent-security.instructions.md), which is authoritative
-> on agentic security. The rules below are the Python mechanics.
+> on agentic security. For the engineering half — control loop, durable state, context budgets, tool
+> design, evals, telemetry — follow
+> [ai-agent-engineering.instructions.md](./ai-agent-engineering.instructions.md). The rules below are
+> the Python mechanics.
 
 - Validate all LLM inputs and outputs at the boundary; treat model output as untrusted (see Security)
 - Use `pydantic` schemas to parse and validate structured LLM responses; reject non-conforming output

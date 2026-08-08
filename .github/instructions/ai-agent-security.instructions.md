@@ -26,6 +26,13 @@ Precedence, so a reviewer never has to guess:
   (AI1 prompt injection, AI2 LLM output in sinks, AI3 output validation). Those are correct but
   describe a 2023-era *LLM app*: one prompt, one completion. They do not cover an agent that holds
   credentials, retains memory across sessions, and invokes tools in a loop.
+- **[ai-agent-engineering.instructions.md](./ai-agent-engineering.instructions.md) is the companion
+  for the same surface, minus security** — agent shape, control loop, durable state and resumption,
+  context engineering, tool ergonomics, prompt/model lifecycle, failure handling, evals, agent
+  telemetry, and release management. Where the two meet the same mechanism, **this file owns the
+  boundary and it owns the reliability**: `BC1`'s hard token ceiling vs how the loop budgets and
+  compacts; `HO1`/`HO2`'s approval gate vs how a paused run resumes; `OB1`'s audit record vs the
+  span/metric set; `TD1`–`TD7`'s tool constraints vs whether the model can use the tool at all.
 - The language files (`go`, `python`, `reactjs`, `state-management`) govern language mechanics.
 
 **The one framing that matters most:** every byte an agent reads that a user or third party can

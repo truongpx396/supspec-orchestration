@@ -1,6 +1,6 @@
 # Prompt-Level Invariant Checklist
 
-*11 items automated · 4 partly automated · 13 human-only*
+*14 items automated · 3 partly automated · 12 human-only*
 
 **Most of this list is now automated — run [`../scripts/track-audit.sh`](../scripts/track-audit.sh)
 first.** It re-derives every ⚙️-marked item below from durable artifacts (the run record, the
@@ -15,10 +15,15 @@ Wire it as a blocking Stop gate with `TRACK_AUDIT=1` (opt-in — see
 [hooks.md](../references/hooks.md)), and run it at the draft-PR boundary regardless.
 
 **Why a ✋ half still exists.** A hook sees one event; the audit sees artifacts. Neither can read
-*reasoning* — whether a brief truly carried the constraints, whether a reviewer engaged or rubber-
-stamped, whether a RED test failed for the right reason rather than a typo. Those are checked by a
-person reading the transcript, and pretending otherwise would manufacture exactly the false
-confidence this pipeline exists to prevent.
+*reasoning* — whether the constraints a brief carried were the ones binding its cluster, whether a
+reviewer engaged or rubber-stamped, whether a RED test failed for the right reason rather than a typo.
+Those are checked by a person reading the transcript, and pretending otherwise would manufacture
+exactly the false confidence this pipeline exists to prevent.
+
+*(Brief **content** used to sit on this side of the line — "open a dispatch and look". It moved:
+`track-brief.sh` reads the outgoing brief at `PreToolUse` and `G6` fails a dispatch that carried none
+of the bundle. What stayed manual is narrower and genuinely judgement: whether the right sections were
+sliced to the right cluster.)*
 
 **When:** after any change to a SKILL.md or mode reference, and spot-check on real runs.
 **Inputs:** the session transcript, `runs/<RUN_ID>.json`, `runs/<RUN_ID>.governance.md`, the diff.
@@ -33,9 +38,9 @@ What a reviewer sees in the PR body when a step is missed:
 |---|---|
 | 1 Preflight & confirm | ⚙️ `I2` (no breadcrumb) |
 | 2 Reconcile / resume | ⚙️ `I3` (no `last_reconcile` stamp) |
-| — Compaction mid-run | ⚙️ `I4` (a dispatch after a compaction with no bundle re-read in between) |
+| — Compaction mid-run | ⚙️ `I4` (a dispatch after a compaction with no bundle re-read in between, **or** a first post-compaction brief that carried none of the bundle) |
 | 3 Isolate | ⚙️ `I1` (on the default branch → FAIL; branch-in-place → WARN) |
-| 4 Governance gate | ⚙️ `G1`–`G4` |
+| 4 Governance gate | ⚙️ `G1`–`G6` (`G5` bundle substance, `G6` the brief actually carried it) |
 | 4 Mode guard + core | ⚙️ `P1`/`P2`, `T1`, `T2` |
 | 5 Convergence | ⚙️ `E1` |
 | 6 Evidence gate | ⚙️ `E2` + the evidence table + compliance warnings |
@@ -47,15 +52,23 @@ What a reviewer sees in the PR body when a step is missed:
 
 ## A. Governance (the round-trip that ships credentials)
 
-- [ ] ⚙️ **A1** `[G3]` — Governance discovery ran **before** the first subagent dispatch. Derived by
-      comparing the governance stamp against the earliest `trace[]` entry.
+- [ ] ⚙️ **A1** `[G3]` — **Every** subagent dispatch was preceded by a governance pin. Derived by
+      comparing the append-only `governance_stamps[]` history against every `trace[]` dispatch — so a
+      deliberate mid-core re-pin (a later cluster widened the matched set) is legal, while a dispatch
+      with no pin at or before it still fails.
 - [ ] ✋ **A2** — `.specify/memory/constitution.md` was read, **or** its absence is explicitly stated
       in the bundle. A missing line is indistinguishable from a skipped check.
 - [ ] ⚙️ **A3** `[G2, G4]` — Every `applyTo`-matching instruction file appears in the bundle for the
       actual diff surface; `security-and-owasp` whenever a trust-boundary path is touched.
-- [ ] ⚙️ **A4** `[G1]` — `runs/<RUN_ID>.governance.md` exists and its sha still matches the record.
-- [ ] ✋ **A5** — Maker briefs embed governance **content**, not filenames. Open an actual dispatch
-      and look. *"Follow `go.instructions.md`"* is the failure this whole gate exists to prevent.
+- [ ] ⚙️ **A4** `[G1]` — `runs/<RUN_ID>.governance.md` exists and its sha still matches the latest pin.
+- [ ] ⚙️ **A4b** `[G5]` — Each matched file's bundle section carries **actionable constraints**, not
+      just a heading. G2 is a substring test and a hollow section satisfies it; G5 reads the section
+      body and fails a bundle that names a file without distilling anything from it.
+- [ ] ⚙️✋ **A5** `[G6]` — Maker briefs embed governance **content**, not filenames.
+      `track-brief.sh` (PreToolUse on the dispatch tool) reads the outgoing brief and counts how many
+      bundle constraint lines it carries, so *"Follow `go.instructions.md`"* — zero lines — is now a
+      **FAIL**, not a trust item. What is still manual: whether the sections sliced into that brief
+      were the ones binding **its** cluster. Open one fan-out dispatch and check the slice.
 - [ ] ✋ **A6** — Frontend clusters carry the design artefacts (`.stitch/designs/…`,
       `design-system/…`) when they exist.
 
@@ -73,11 +86,13 @@ What a reviewer sees in the PR body when a step is missed:
 
 - [ ] ⚙️ **B1** `[P1, P2]` — `phase` was stamped, and `phase_log[]` covers the canonical gate
       sequence for the recorded core.
-- [ ] ⚙️✋ **B2** `[I4]` — If the session was compacted: the bundle was **re-read from disk** before
-      the next dispatch. `track-compact.sh` records both halves as hook-observed facts
-      (`compactions[]` from `PostCompact`, `governance_reads[]` from `PostToolUse`), so the audit
-      proves the re-read happened. What it still cannot prove is that the re-read was **used** —
-      that the next brief actually carried those constraints. Read one post-compaction dispatch.
+- [ ] ⚙️ **B2** `[I4]` — If the session was compacted: the bundle was **re-read from disk** before the
+      next dispatch, **and the first brief after the compaction actually carried its constraints**.
+      `track-compact.sh` records both halves of the re-read as hook-observed facts (`compactions[]`
+      from `PostCompact`, `governance_reads[]` from `PostToolUse`); `track-brief.sh` records what the
+      next brief contained. I4 now fails a run where the bundle was re-read and the following brief
+      still went out empty — the silent post-compaction degradation this gate exists for. No longer a
+      manual read.
 - [ ] ✋ **B3** — After any resume, `track-reconcile.sh` ran and its `resume_action` was **acted on**,
       not merely printed.
 - [ ] ✋ **B4** — Position was never rebuilt by reading the worktree ("let me look at what's there and

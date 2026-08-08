@@ -46,17 +46,23 @@ the *check* must happen, and its outcome must be stated. Never no-op by omission
    and `track-audit.sh` check **G2** re-derives the matched set from the same `applyTo` globs. Any
    file matched by G2 but absent from your bundle is a FAIL, so an enumeration you carry in your head
    will eventually disagree with the gate. Two consequences worth knowing:
-   - A file with **no `applyTo`** is never auto-matched and G2 never requires it —
-     `code-review-generic.instructions.md` is deliberately in this category (see step 5).
+   - A file with **no `applyTo`** is never auto-matched and G2 never requires it. **Two files are
+     deliberately in this category, and neither belongs in the bundle:**
+     - `code-review-generic.instructions.md` — a reviewer rubric, loaded at the review step (see
+       step 5).
+     - `agent-skills.instructions.md` — a **design-time authoring guide, invoked explicitly**. Read it
+       when the task *is* to design a new skill or restructure an existing one: name it, read it, then
+       build. A routine edit to a `SKILL.md` (fixing a step, a command, a version) does **not** pull it
+       in, and G2 will not ask for it.
    - Two files are easy to miss because they are not language files, and both match on path/name
      rather than extension:
-     - `agent-skills.instructions.md` (`**/skills/**/SKILL.md`) — **any task that authors or edits a
-       skill pulls it in.**
-     - `ai-agent-security.instructions.md` — matches agent/tool/MCP/prompt/RAG paths. Its glob is a
-       heuristic and agentic code hides under many names, so **if the diff wires an LLM to a
-       capability (tools, MCP, memory, retrieval, delegation), treat it as matched even when no glob
-       hit.** Note it applies to *this* repo's own skills and hooks, which are themselves an agentic
-       system.
+     - `ai-agent-security.instructions.md` and `ai-agent-engineering.instructions.md` — both match
+       agent/tool/MCP/prompt/RAG paths, and they are a pair: security owns the threat surface,
+       engineering owns the loop, state, context, evals, and telemetry. Their globs are a heuristic
+       and agentic code hides under many names, so **if the diff wires an LLM to a capability (tools,
+       MCP, memory, retrieval, delegation) or changes how one is steered, treat both as matched even
+       when no glob hit.** Note they apply to *this* repo's own skills and hooks, which are themselves
+       an agentic system.
 3. **Design context (frontend only)** — when the surface includes `**/*.tsx`, `**/*.ts`, `**/*.jsx`,
    `**/*.css` or any other frontend file, read the design artefacts if present (pass silently if
    absent, never fail): `.stitch/designs/<page>.html` for the page being built, and the
@@ -64,11 +70,14 @@ the *check* must happen, and its outcome must be stated. Never no-op by omission
    rather than diverging into a separate alignment pass.
 4. **Security** — for any cluster touching a trust boundary (auth, secrets, network, persistence,
    deploy config): `security-and-owasp.instructions.md`.
-5. **NOT here: the review rubric.** `code-review-generic.instructions.md` is a *reviewer* rubric, not
-   a maker constraint. It carries no `applyTo`, so it is not part of the matched set and does not go
-   in the bundle. It is loaded later, at the review step, and passed into the
-   `requesting-code-review` / stage-2 reviewer brief — see
-   [The review step reads its own rubric](#the-review-step-reads-its-own-rubric).
+5. **NOT here: the review rubric, and not the skill-authoring guide.** Both carry no `applyTo`, so
+   neither is part of the matched set and neither goes in the bundle.
+   - `code-review-generic.instructions.md` is a *reviewer* rubric, not a maker constraint. It is
+     loaded later, at the review step, and passed into the `requesting-code-review` / stage-2 reviewer
+     brief — see [The review step reads its own rubric](#the-review-step-reads-its-own-rubric).
+   - `agent-skills.instructions.md` is a *design-time* guide read on explicit request (step 2). If
+     this run's actual task is authoring or restructuring a skill, read it then and say so — but it is
+     never pulled in merely because a `SKILL.md` appears in the diff.
 
 ### Budget the read — distil, don't hoard
 
@@ -155,12 +164,52 @@ Governance therefore gates **both ends** — the maker brief prevents the violat
 catches what slipped through. That is deliberate defense-in-depth, not redundancy. Review is the
 backstop, never the first place governance is consulted.
 
+### This step is now audited, not trusted
+
+`track-brief.sh` (a `PreToolUse` hook on the dispatch tool) reads the outgoing brief and counts how
+many of the bundle's constraint lines it actually contains — the one hop nothing used to observe.
+`track-audit.sh` check **G6** turns that into a verdict:
+
+- **A brief that carried zero bundle constraints is a FAIL.** That is the filename-passing failure
+  mode, and no amount of *"follow `go.instructions.md`"* clears it.
+- **A brief that carried some but few is a WARN.** A fan-out brief embeds only its cluster's sections,
+  so a low count is expected — the hook reports rather than judges.
+- **A dispatch that genuinely needs no governance must say so.** Read-only research and exploration
+  dispatches carry no maker constraints; declare that in the brief on its own line and the audit
+  records the decision instead of counting it as a miss:
+
+  ```
+  GOVERNANCE: n/a — read-only research, returns findings only, writes nothing
+  ```
+
+  Same rule as the bundle's own `ABSENT` lines: an explicit declaration is proof the question was
+  asked; silence is indistinguishable from forgetting.
+
+Matching text is not judging relevance — G6 cannot tell whether the sections you sliced are the ones
+binding *that* cluster. That narrower question is what the audit still lists as a human check.
+
+### Widening the bundle mid-core: re-distil and re-pin
+
+If a later cluster drags in an instruction file the first pass did not match (a `.tsx` file appears in
+a run that started backend-only), **do not** patch the file and move on: re-distil the new
+constraints into the bundle and call `track-note.sh governance <path>` again. Re-pinning is
+append-only — `governance_stamps[]` keeps the history — so G3 asks whether *every* dispatch was
+preceded by *some* pin rather than penalizing the re-pin, and G1 reports how many briefs were built
+from the earlier version so a reviewer can confirm those clusters did not need the added constraints.
+Editing the bundle **without** re-pinning is the case that still WARNs: the record then describes
+constraints no brief provably carried.
+
 ## Step 4 — Re-anchor after a compaction
 
 If the context was compacted (or the session crashed and resumed) at any point during the core:
 **re-read `runs/<RUN_ID>.governance.md` from disk before dispatching the next subagent.** It is a
 ~50-line read, it is authoritative, and it costs nothing next to shipping an ungoverned brief.
 `track-reconcile.sh`'s `resume_action` says this explicitly on every resume.
+
+Both halves of this are now gated. `I4` fails a run that dispatched after a compaction with no
+bundle re-read in between — **and** a run where the re-read happened but the very next brief still
+went out carrying none of the bundle. Re-reading the file and then briefing from memory anyway is the
+exact shape of the silent degradation, so it is checked, not assumed.
 
 ## The review step reads its own rubric
 
@@ -197,13 +246,17 @@ instruction to write it.
 
 - [ ] Constitution read, or explicitly noted absent
 - [ ] `.github/instructions/` **listed** and every `applyTo`-matching file read — matched by glob at
-      run time, not from a remembered list (includes `agent-skills.instructions.md` when the diff
-      touches a `SKILL.md`)
+      run time, not from a remembered list (a `SKILL.md` in the diff pulls in the two `ai-agent-*`
+      files, whose globs cover it)
 - [ ] Design artefacts read for any frontend surface, or noted absent
 - [ ] `security-and-owasp.instructions.md` read for any trust-boundary surface
 - [ ] `code-review-generic.instructions.md` **not** in the bundle — it is loaded at the review step
       and embedded in the reviewer brief instead
-- [ ] Constraints distilled and written to `runs/<RUN_ID>.governance.md`
+- [ ] `agent-skills.instructions.md` **not** in the bundle — it is a design-time authoring guide,
+      read only when the task is explicitly to design or author a skill
+- [ ] Constraints distilled and written to `runs/<RUN_ID>.governance.md` — each matched file's section
+      carries ≥2 actionable bullets, not just a heading (`G5` fails a hollow section)
 - [ ] `## Cluster → binding sections` map added when the core fans out to parallel makers
-- [ ] `track-note.sh governance <path>` called
-- [ ] Bundle content embedded in every maker and reviewer brief
+- [ ] `track-note.sh governance <path>` called — again after any mid-core re-distil
+- [ ] Bundle content embedded in every maker and reviewer brief (`G6` counts it in the brief text);
+      any dispatch that needs none declares `GOVERNANCE: n/a — <why>`
