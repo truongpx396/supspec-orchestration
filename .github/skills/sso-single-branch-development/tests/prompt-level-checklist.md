@@ -1,6 +1,6 @@
 # Prompt-Level Invariant Checklist
 
-*14 items automated · 3 partly automated · 12 human-only*
+*13 items automated · 4 partly automated · 12 human-only*
 
 **Most of this list is now automated — run [`../scripts/track-audit.sh`](../scripts/track-audit.sh)
 first.** It re-derives every ⚙️-marked item below from durable artifacts (the run record, the

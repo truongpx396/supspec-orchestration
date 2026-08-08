@@ -220,7 +220,7 @@ Scripts are listed in the order they typically fire across a track's lifetime:
 | Script | 🔗 Trigger Event | Type / Kind | What it enforces / records |
 |---|---|---|---|
 | `install-hooks.sh` *(repo-wide)* | skill-invoked (setup) | **Lifecycle** | 📦 Idempotent, consent-gated, drift-aware installer for the whole bundle |
-| `track-preflight.sh` *(per-track)* | skill-invoked (Step 1) | **Lifecycle** | 🎫 Mint or recover stable `RUN_ID`; check prerequisites; persist resume breadcrumb |
+| `track-preflight.sh` *(per-track)* | skill-invoked (Step 1) | **Lifecycle** | 🎫 Mint or recover stable `RUN_ID`; check prerequisites; persist resume breadcrumb. The persisted id **self-retires** — adopted only while the run is live and the checkout is on its branch, so a finished run never governs the next session |
 | `track-deps.sh` *(per-track)* | skill-invoked (Step 1, via preflight) | **Lifecycle** | 🔒 Verify the repo's pinned tool versions (`skill-deps.json`) — fail hard on a required lock violation, warn on out-of-range when non-strict; result TTL-cached (`TRACK_DEPS_CACHE_TTL_HOURS`, default 72h) in `runs/.deps-cache.json` |
 | `track-reconcile.sh` *(per-track)* | `SessionStart` | **Lifecycle** | ♻️ Recover state from committed history + run record; stash untrusted work |
 | `track-guard.sh` *(repo-policy)* | `PreToolUse` | **Scope & guard** | 🛡️ Deny edits outside writable scope, frozen paths, artifacts, or destructive ops |
@@ -239,6 +239,13 @@ Scripts are listed in the order they typically fire across a track's lifetime:
 | `track-wave-preflight.sh` *(EPT-only)* | skill-invoked (EPT Step 1 + 7) | **Lifecycle** | 🌊 Mint/recover wave dispatch breadcrumb; derive per-track `RUN_ID`s as `<wave-id>_<track-id>`; close wave at Step 7 |
 
 Everything a run records lands in `runs/<RUN_ID>.json` (gitignored). Full documentation: **[references/hooks.md](.github/skills/sso-single-branch-development/references/hooks.md)**.
+
+> **Blocked by a hook and not sure which one?** The three gates read different inputs and fail
+> independently — the guard's writable scope is **not** keyed to `RUN_ID`, so clearing run state does
+> nothing for a scope denial. They tend to trip together and look like one policy.
+> [Triage: a hook is blocking and you don't know why](.github/skills/sso-single-branch-development/references/hooks.md#triage-a-hook-is-blocking-and-you-dont-know-why)
+> has the commands that show what each hook actually resolved, and how to tell leftover run state from
+> a real constraint.
 
 ---
 
@@ -266,6 +273,14 @@ Three properties do the real work here, and each exists because its absence was 
 - **The fingerprint follows the worktree**, resolved from the branch in the run's breadcrumb — not the
   hook's working directory, which is the main checkout even while the agent edits a linked worktree.
   Fingerprinting the wrong tree makes every capture agree trivially, which reads as convergence.
+
+**A prose-only diff gets a declared escape.** `TRACK_REQUIRED_EVIDENCE` is a floor required on *every*
+diff by design — but a docs-only change cannot alter a go/py/ts result, so the floor demands of it
+something no honest action can produce, and a gate satisfiable only dishonestly gets satisfied
+dishonestly (re-run an unrelated suite, or waive the gate wholesale). `TRACK_EVIDENCE_SKIP_GLOBS`
+(opt-in, ships empty) no-ops the gate when **every** path the diff touches matches a declared non-code
+glob. All-or-nothing: one code file anywhere in the diff restores the full requirement set, so it
+cannot smuggle code past the floor.
 
 **Stack-aware defaults.** `install-hooks.sh --apply` detects repo signals and seeds `track-env.base.sh` with opinionated starting points. Signals marked *(auto)* are detected by the installer; others must be added manually to `TRACK_EVIDENCE_KINDS` and `TRACK_EVIDENCE_RULES`:
 
@@ -322,7 +337,7 @@ The evidence gate proves the tests *passed*. It cannot prove the run was **disci
 | | `E2` | Passing captures are substantial enough to be real (a truncated PASS-looking string proves nothing) |
 | **Terminal state** | `F1` | A terminal `status` was recorded — `success`, or a non-success **with** a blocker to route on |
 
-**What it refuses to claim.** The genuinely un-mechanizable checks stay in `MANUAL` and print every run — e.g. *did maker briefs embed governance **content** not just filenames* (`A5`), *did the post-compaction re-read actually get **used** in the next brief* (`B2`), *did the RED batch fail for the **right reason*** (`D1`), *in scaffold mode did the controller apply subagent output rather than author it* (`C2`). The full 13-item list lives in `tests/prompt-level-checklist.md`. A clean audit is **necessary, not sufficient** — the MANUAL items are where the residual risk lives.
+**What it refuses to claim.** Six checks stay in `MANUAL` and print every run: *was the governance a brief carried the **right** governance for that cluster* (`A5` — `G6` counts constraint lines, it cannot judge relevance), *in scaffold mode did the controller apply subagent output rather than author it* (`C2`), *did the review apply the governance rubric rather than a generic "looks good"* (`C3`), *did the RED batch fail for the **right reason*** (`D1`), *did characterization tests pass at baseline* (`D3`), *was a completion claimed before its creating command returned* (`E3`). The list shrinks on **evidence, not assertion** — *"did the post-compaction re-read actually get used in the next brief"* (`B2`) left it once `I4` + `G6` could decide it from hook-observed artifacts, and `A5` narrowed from "did content make the hop" to "was it the right content" for the same reason. The full checklist — 12 human-only items — lives in `tests/prompt-level-checklist.md`. A clean audit is **necessary, not sufficient** — the MANUAL items are where the residual risk lives.
 
 **Two modes, deliberately split** — so the bundle keeps its no-op-until-configured contract:
 
@@ -557,7 +572,9 @@ newest `vX.Y.Z` tag from the catalog remote, clones the catalog at that tag, and
 `--ref <tag>` to pin an exact release, or `--local` (alias `--no-fetch`) to install the checkout you cloned
 as-is. Running the script from inside the catalog repo itself is always treated as `--local`, and if the
 latest tag can't be resolved (offline, or no releases) it falls back to the local checkout with a warning.
-The resolved version is printed on the `version:` line of the plan header.
+The resolved version is printed on the `version:` line of the plan header. **[CHANGELOG.md](CHANGELOG.md)**
+records what changed in each `vX.Y.Z` — read it before pinning a `--ref`, and before upgrading a repo
+that already has the bundle installed (some releases change hook defaults).
 
 What `--apply` does, in the target repo:
 
@@ -675,11 +692,25 @@ Key env vars (set in `track-env.base.sh` unless noted):
 
 Example value: `*.go:go-test;*.py:py;*.tsx:ts;*.ts:ts;migrations/*:pg-explain`
 
+**Governance** *(repo-policy — how strictly the bundle-to-brief hop is graded)*
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `TRACK_BRIEF_DENY` | `0` | `1` = `track-brief.sh` **denies** a dispatch whose brief carries zero bundle constraints. Records only by default, so a repo can confirm the tool matcher works before it starts blocking |
+| `TRACK_BRIEF_MIN_LINES` | `3` | Constraint lines a brief must carry to count as governed. Fewer *but non-zero* is a `G6` **WARN**, never a FAIL — a fan-out brief legitimately embeds only its own cluster's sections, and no hook can tell a correct slice from a lazy one |
+| `TRACK_BRIEF_SIG_LEN` | `40` | Characters of each normalized constraint line used as its match signature (both sides lowercase, punctuation collapsed — a re-wrapped or back-ticked line still matches) |
+| `TRACK_GOV_MIN_BULLETS` | `2` | Substantive constraints each matched instruction file's bundle section must carry for `G5` to pass. `G2` is a substring test that a bare heading satisfies while transferring nothing |
+| `TRACK_AUDIT` | `""` *(off)* | `1` = `track-audit.sh --hook` blocks at `Stop` on any `FAIL`. The CLI form is always available regardless — see [Two modes, deliberately split](#-discipline-audit) |
+
+A dispatch that genuinely needs no governance (read-only research) clears `G6` with an explicit
+`GOVERNANCE: n/a — <why>` line in the brief — the same "state ABSENT, never no-op by omission" rule
+the bundle itself follows.
+
 **Run lifecycle** *(mix of repo-policy and per-track)*
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `RUN_ID` | minted by preflight | Stable identifier threading branch ↔ PR ↔ commit trailer ↔ run record |
+| `RUN_ID` | minted by preflight | Stable identifier threading branch ↔ PR ↔ commit trailer ↔ run record. The block `--persist` writes into `track-env.sh` **self-retires**: it is adopted only while the run is still live (no terminal `status`, no `completed_utc`) *and* the checkout is on the run's own branch, so a run that ended by ceiling trip, `blocked`, or abandon cannot govern the next session. An **exported** `RUN_ID` always outranks it (orchestrator-dispatched workers are unaffected); a file-supplied one is an activation hint, not an override |
 | `RUNS_DIR` | `runs` | Directory for run records — must be gitignored |
 | `TRACK_MAX_TOOL_CALLS` | `200` | Hard ceiling on tool calls; run halts when reached |
 | `TRACK_MAX_TOKEN_ESTIMATE` | `800000` | Token ceiling; blocks stop + writes `status=budget-exceeded` when exceeded. Set to `0` to disable. Counts `input + cache_write + output` from the transcript's own `message.usage` (cache re-reads excluded), falling back to a chars÷4 heuristic on surfaces that record no usage. **Re-tune on a known-good run** — a value carried over from the old heuristic-only estimate trips far too early, since the real counts include the cached system prompt and tool schemas. |
@@ -743,7 +774,7 @@ bash .github/skills/sso-executing-parallel-tracks/tests/test-skill.sh
 ```
 
 The test harnesses are a **documentation-contract fence + functional regression suite** in one:
-- **251 SBD tests** cover: preflight flag behavior (`--persist`, `--complete`, breadcrumb stamping), guard allow/deny decisions (scope, frozen paths, destructive ops, FF-push gating, first-publish carve-out boundaries), evidence capture + gate (fingerprint freshness, stale detection, multi-kind, worktree-relative fingerprinting, verdict from exit code, and rejection of test commands that are merely quoted or heredoc'd rather than run), meter counting + hard-stop, trace schema, compaction/governance-read recording, audit invariants (including `G3` provenance disclosure and `G4` both directions), sentinel pattern matching, dependency version-lock + probe cache (`skill-deps.json`, TTL caching, lock violations), report Auto-block rendering, run-record field completeness, token ceiling enforcement across both transcript schemas and provider usage data (`TRACK_MAX_TOKEN_ESTIMATE`), and structural checks on SKILL.md / hooks.md / templates.
+- **310 SBD tests** cover: preflight flag behavior (`--persist`, `--complete`, breadcrumb stamping, `RUN_ID` self-retirement and the bricked-checkout recovery), guard allow/deny decisions (scope, frozen paths, destructive ops, FF-push gating, first-publish carve-out boundaries, `--force`/`--no-verify` matched only on git/gh segments), evidence capture + gate (fingerprint freshness, stale detection, multi-kind, worktree-relative fingerprinting, verdict from exit code, single-line `cmd` extraction from a multi-line shell block, and rejection of test commands that are merely quoted or heredoc'd rather than run), meter counting + hard-stop, trace schema, compaction/governance-read recording, brief-hop counting (`briefs[]`), audit invariants (including `G3` provenance disclosure and `G4`/`G5`/`G6` in both directions, each from a purpose-built fixture repo where the diff *is* the fixture), sentinel pattern matching, dependency version-lock + probe cache (`skill-deps.json`, TTL caching, lock violations), report Auto-block rendering, run-record field completeness, token ceiling enforcement across both transcript schemas and provider usage data (`TRACK_MAX_TOKEN_ESTIMATE`), and structural checks on SKILL.md / hooks.md / templates.
 - **205 EPT tests** cover: SKILL.md structural integrity (Steps 0–7, gates, wave planner), manifest template completeness, run-record schema (trace[]/ skills[] separation), precheck ownership-overlap detection (disjoint / overlapping / shared hotspot / 3-way), and structural governance assertions.
 
 Both suites run on every push/PR via [`.github/workflows/skill-tests.yml`](.github/workflows/skill-tests.yml).
@@ -765,6 +796,7 @@ Both suites run on every push/PR via [`.github/workflows/skill-tests.yml`](.gith
 
 | File | Purpose |
 |---|---|
+| [`CHANGELOG.md`](CHANGELOG.md) | Release history — what each `vX.Y.Z` changed, and which defaults moved |
 | `.github/skills/sso-single-branch-development/SKILL.md` | SBD skill — full pipeline |
 | `.github/skills/sso-executing-parallel-tracks/SKILL.md` | EPT skill — conductor |
 | `.github/skills/sso-pr-review-feedback/SKILL.md` | PRF skill — rework stage |

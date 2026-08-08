@@ -8,6 +8,35 @@ contracts are still stabilizing — matching the convention used by
 Each skill's `SKILL.md` frontmatter carries its own `version` field; this file tracks the
 whole-repo release that ships them together.
 
+## [0.6.1] - 2026-08-09
+
+### README/CHANGELOG drift after 0.6.0
+
+The 0.6.0 release added `track-brief.sh`, `G5`/`G6`, and narrowed the audit's MANUAL list, but the
+README's own account of itself wasn't updated to match, and the test count it quoted predated v0.4.1's
+run-state fixes. No skill code changed — this corrects the docs to what v0.6.0 already shipped.
+
+- **Test count corrected**: README claimed 251 SBD tests; the suite is 310 (verified by running
+  `tests/test-skill.sh`). The coverage summary now names the v0.4.1/v0.6.0 areas it omitted:
+  `RUN_ID` self-retirement, the bricked-checkout recovery path, git/gh-scoped `--force` matching,
+  single-line `cmd` extraction from a multi-line shell block, brief-hop counting, and `G4`/`G5`/`G6`
+  exercised from purpose-built fixture repos.
+- **MANUAL checklist list was pre-0.6.0**: README still listed `B2` as un-mechanizable and described
+  `A5` in its pre-narrowing form. Now lists the actual six (`A5, C2, C3, D1, D3, E3`) and states why
+  `B2` left the list — `I4` + `G6` now decide it from hook-observed artifacts.
+  `tests/prompt-level-checklist.md`'s own header tally (14 automated / 3 partly) also didn't match its
+  markers (13 / 4); fixed.
+- **New governance env vars from 0.6.0 were undocumented**: `TRACK_BRIEF_DENY`, `TRACK_BRIEF_MIN_LINES`,
+  `TRACK_BRIEF_SIG_LEN`, `TRACK_GOV_MIN_BULLETS`, and `TRACK_AUDIT` now have their own table in the
+  Configure section instead of being buried in a hooks-table cell.
+- **v0.4.1's `RUN_ID` self-retirement** (the fix for a finished run bricking every later session in a
+  checkout) is now stated where a reader would look for it — the hooks table and the `RUN_ID` env row
+  — instead of only in the changelog.
+- **`TRACK_EVIDENCE_SKIP_GLOBS`** (added in v0.4.1) now has its rationale in the Evidence section
+  itself, not just a table row.
+- **`CHANGELOG.md` is now linked** from Key files and from the installer's version-selection
+  paragraph; its own tag links were missing entries for 0.4.0, 0.4.1, 0.5.0, and 0.6.0.
+
 ## [0.6.0] - 2026-08-08
 
 ### Instructions bundle: de-project-ified, review rubric scoped, agentic security added
@@ -366,6 +395,11 @@ Initial tagged release. Three composable skills plus their shared mechanical-hoo
   `scripts/install-hooks.sh` for both Copilot and Claude Code surfaces.
 - One-command repo bootstrap via `install.sh`.
 
+[0.6.1]: https://github.com/truongpx396/supspec-orchestration/releases/tag/v0.6.1
+[0.6.0]: https://github.com/truongpx396/supspec-orchestration/releases/tag/v0.6.0
+[0.5.0]: https://github.com/truongpx396/supspec-orchestration/releases/tag/v0.5.0
+[0.4.1]: https://github.com/truongpx396/supspec-orchestration/releases/tag/v0.4.1
+[0.4.0]: https://github.com/truongpx396/supspec-orchestration/releases/tag/v0.4.0
 [0.3.0]: https://github.com/truongpx396/supspec-orchestration/releases/tag/v0.3.0
 [0.2.0]: https://github.com/truongpx396/supspec-orchestration/releases/tag/v0.2.0
 [0.1.1]: https://github.com/truongpx396/supspec-orchestration/releases/tag/v0.1.1
