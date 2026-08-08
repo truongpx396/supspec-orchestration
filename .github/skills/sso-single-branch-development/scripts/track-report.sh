@@ -256,10 +256,21 @@ if [ -f "$rec" ] && [ "$(jq -r '.evidence | length' "$rec" 2>/dev/null || echo 0
   # capture could be ❌ here and acceptable there, with neither side flagging it.
   fail_pat="${TRACK_FAIL_PATTERN:-FAIL|--- FAIL|Error:|panic:|Traceback|AssertionError|✗|npm ERR!}"
   jq -r --arg fp "$fail_pat" '
+    # A captured command can be a whole multi-line shell block (cd / setup / the
+    # actual test), not a one-liner. `.cmd` is the RAW command verbatim — good for
+    # the JSON record, fatal for a GFM table cell: a literal newline ends the row,
+    # so everything after the first line loses its leading "|" and renders as a
+    # bare text blob with no visible Command/Result/Fingerprint columns. Collapse
+    # to one line for display only; the full command still lives in the record.
+    def display_cmd:
+      gsub("\r\n|\r|\n"; "; ")
+      | gsub("[ \t]+"; " ")
+      | sub("^[ \t;]+"; "") | sub("[ \t;]+$"; "")
+      | if (length > 240) then .[0:240] + " …" else . end;
     .evidence[] |
     (if (.verdict // "") != "" then (.verdict == "fail")
      else ((.response // "") | test($fp)) end) as $failed |
-    "| \(.kind // "?") | `\((.cmd // "?") | gsub("\\|";"\\|"))` | \(if $failed then "❌ FAIL" else "✅ pass" end) | `\((.fingerprint // "?")[0:12])` |"
+    "| \(.kind // "?") | `\((.cmd // "?") | display_cmd | gsub("\\|";"\\|"))` | \(if $failed then "❌ FAIL" else "✅ pass" end) | `\((.fingerprint // "?")[0:12])` |"
   ' "$rec" 2>/dev/null || printf '| _(evidence unreadable)_ | | | |\n'
 else
   printf '_No evidence rows recorded (evidence hooks not enabled, or none captured)._\n'
