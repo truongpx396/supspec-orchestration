@@ -100,12 +100,13 @@ cmd_exec="$(printf '%s' "$cmd_exec" | sed "s/'[^']*'/ /g; s/\"[^\"]*\"/ /g")"
 
 # Derive the pack kind from repo-supplied label:pattern pairs (first match wins).
 kind=""
+kind_pat=""
 if [ -n "${TRACK_EVIDENCE_KINDS:-}" ]; then
   saved_ifs="$IFS"; IFS=';'
   for pair in $TRACK_EVIDENCE_KINDS; do
     label="${pair%%:*}"; pat="${pair#*:}"
     [ -n "$label" ] && [ -n "$pat" ] && [ "$label" != "$pair" ] || continue
-    if printf '%s' "$cmd_exec" | grep -Eq "$pat"; then kind="$label"; break; fi
+    if printf '%s' "$cmd_exec" | grep -Eq "$pat"; then kind="$label"; kind_pat="$pat"; break; fi
   done
   IFS="$saved_ifs"
 fi
@@ -117,6 +118,31 @@ if [ -n "${TRACK_TEST_CMD_PATTERN:-}" ] && printf '%s' "$cmd_exec" | grep -Eq "$
 fi
 [ -n "$kind" ] && matched=1
 [ "$matched" -eq 1 ] || exit 0
+
+# --- pick a concise, single-line command for display --------------------------
+# `cmd` (below, in the record write) is the RAW tool call verbatim — often a
+# whole shell block (cd / setup / debugging / the real invocation), not just
+# the test itself. Showing that whole block as "the command" buries the actual
+# invocation under scaffolding, and a literal newline inside it corrupts the PR
+# body's evidence table (a markdown table row cannot contain one). `cmd_exec`
+# was already computed above for MATCHING with quotes and heredoc bodies
+# stripped, so any pattern hit inside it is a real, non-decorative occurrence —
+# reuse it to pick which line to show, instead of guessing via truncation
+# (which can just as easily cut off before reaching the real invocation). The
+# full raw block is preserved as `cmd_full` (only when it actually differs) so
+# nothing is lost for an audit that wants the whole picture.
+cmd_display="$cmd"
+if [ "$(printf '%s\n' "$cmd" | wc -l)" -gt 1 ]; then
+  line_pat="$kind_pat"
+  if [ -n "${TRACK_TEST_CMD_PATTERN:-}" ]; then
+    if [ -n "$line_pat" ]; then line_pat="($line_pat)|(${TRACK_TEST_CMD_PATTERN})"
+    else line_pat="$TRACK_TEST_CMD_PATTERN"; fi
+  fi
+  if [ -n "$line_pat" ]; then
+    picked="$(printf '%s\n' "$cmd_exec" | grep -E "$line_pat" | tail -1 || true)"
+    [ -n "$picked" ] && cmd_display="$picked"
+  fi
+fi
 
 resp="$(jq -r '.tool_response // empty' <<<"$input")"
 
@@ -213,7 +239,10 @@ fingerprint="$(
 
 ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 tmp="$(mktemp)"
-jq --arg t "$ts" --arg k "$kind" --arg c "$cmd" --arg r "$resp" --arg f "$fingerprint" \
+jq --arg t "$ts" --arg k "$kind" --arg c "$cmd_display" --arg cf "$cmd" --arg r "$resp" --arg f "$fingerprint" \
    --arg v "$verdict" --arg vb "$verdict_by" \
-  '.evidence = ((.evidence // []) + [{t:$t, kind:$k, cmd:$c, response:$r, fingerprint:$f, verdict:$v, verdict_by:$vb}]) | .started_ts = (.started_ts // $t) | .last_ts = $t' "$rec" >"$tmp" && mv "$tmp" "$rec"
+  '.evidence = ((.evidence // []) + [
+      {t:$t, kind:$k, cmd:$c, response:$r, fingerprint:$f, verdict:$v, verdict_by:$vb}
+      + (if $c != $cf then {cmd_full:$cf} else {} end)
+    ]) | .started_ts = (.started_ts // $t) | .last_ts = $t' "$rec" >"$tmp" && mv "$tmp" "$rec"
 exit 0
