@@ -86,7 +86,7 @@ cleanup() {
   git branch -D "$TEST_BRANCH" --quiet 2>/dev/null || true
   for f in "${SCRATCH_FILES[@]:-}"; do
     git rm --cached "$f" --quiet 2>/dev/null || true; rm -f "$f"; done
-  rm -rf "$TMPDIR_RUNS"
+  rm -rf "$TMPDIR_RUNS" ${AUD_DIFF_ISO:+"$AUD_DIFF_ISO"}
 }
 trap cleanup EXIT
 git checkout -b "$TEST_BRANCH" --quiet 2>/dev/null
@@ -1092,7 +1092,25 @@ aud_seed() { # aud_seed <run-id> — a clean, fully-disciplined story run
 # call site brings the flakiness back. G4's own behaviour is asserted below in an isolated
 # repo that sets the pattern explicitly, which overrides this.
 export TRACK_TRUST_BOUNDARY_PATTERN="__no_such_trust_boundary_path__"
-aud_json() { RUN_ID="$1" RUNS_DIR="$AUD_RUNS" TRACK_BASE_REF="" bash "$AUDIT" --json 2>/dev/null; }
+
+# Pinning the trust-boundary pattern was only half the leak. `changed` also drives G2 and G5
+# (bundle coverage / bundle substance), which resolve `.github/instructions/*` globs against the
+# REAL working diff — so editing this repo's own SKILL.md (matched by the ai-agent-* globs) made
+# the seeded fake bundle "incomplete" and turned G2 into a FAIL, taking down every clean-run
+# assertion here for reasons having nothing to do with the change. Run these cases from an
+# isolated repo with a neutral diff and no .github/instructions/ at all: the record-derived
+# checks behave identically, and the diff-derived ones WARN (nothing to match) instead of
+# reading the contributor's working tree. G2/G4/G5/G6's own positive+negative paths are asserted
+# below in purpose-built repos where the diff IS the fixture.
+# Name deliberately distinct from the AUD_ISO used (and `rm -rf`'d) by the I1/I2/I3 cases
+# further down — sharing it would delete this fixture mid-section and blank every later verdict.
+# On its own branch, since I1 fails a run sitting on the default branch.
+AUD_DIFF_ISO="$(mktemp -d)"
+( cd "$AUD_DIFF_ISO" && git init -q . && git config user.email t@t && git config user.name t \
+  && echo seed > seed.txt && git add -A && git commit -qm seed && git branch -M main \
+  && git checkout -qb work/aud && echo note > notes.txt ) >/dev/null 2>&1
+aud_json() { ( cd "$AUD_DIFF_ISO" && RUN_ID="$1" RUNS_DIR="$AUD_RUNS" TRACK_BASE_REF="main" \
+               bash "$AUDIT" --json 2>/dev/null ); }
 aud_verdict() { aud_json "$1" | jq -r --arg c "$2" '.checks[] | select(.id==$c) | .verdict'; }
 
 # A clean run must NOT produce failures — a gate that always fires gets disabled.
@@ -1157,6 +1175,102 @@ g4_seed '# bundle
   && pass "audit: G4 passes once the bundle pulls in security-and-owasp" \
   || fail "audit: G4 passes once the bundle pulls in security-and-owasp (got $(_g4))"
 rm -rf "$G4_ISO"
+
+# G5 — bundle SUBSTANCE, both directions. G2 is a substring test: a bare heading satisfies it
+# exactly as well as a distilled section does, so a bundle could pass coverage while carrying
+# nothing any brief could embed. G5 reads the section body, so both shapes are pinned here.
+G5_ISO="$(mktemp -d)"
+( cd "$G5_ISO" && git init -q . && git config user.email t@t && git config user.name t \
+  && echo seed > seed.txt && git add -A && git commit -qm seed && git branch -M main \
+  && git checkout -qb work/g5 && mkdir -p .github/instructions \
+  && printf -- '---\ndescription: go\napplyTo: '"'"'**/*.go'"'"'\n---\n# Go\n' \
+       > .github/instructions/go.instructions.md \
+  && printf 'package main\n' > app.go ) >/dev/null 2>&1
+mkdir -p "$G5_ISO/runs"
+g5_seed() { printf '%s\n' "$1" > "$G5_ISO/bundle.md"
+  jq -nc --arg p "$G5_ISO/bundle.md" \
+    '{run_id:"g5",v:1,tool_calls:1,phase:{mode:"story",step:"green"},
+      phase_log:[{t:"2026-01-01T00:00:00Z",mode:"story",step:"governance"}],
+      governance_bundle:{path:$p},trace:[],evidence:[]}' > "$G5_ISO/runs/g5.json"; }
+_g5() { ( cd "$G5_ISO" && RUN_ID=g5 RUNS_DIR=runs TRACK_BASE_REF=main \
+          TRACK_TRUST_BOUNDARY_PATTERN="__none__" bash "$AUDIT" --json --warn-only 2>/dev/null ) \
+        | jq -r --arg c "$1" '.checks[] | select(.id==$c) | .verdict'; }
+g5_seed '# bundle
+## go.instructions.md — matched **/*.go'
+[ "$(_g5 G2)" = "PASS" ] && [ "$(_g5 G5)" = "FAIL" ] \
+  && pass "audit: G5 fails a heading with no constraints under it (which G2 still passes)" \
+  || fail "audit: G5 fails a hollow section (got G2=$(_g5 G2) G5=$(_g5 G5))"
+g5_seed '# bundle
+## go.instructions.md — matched **/*.go
+- see the file'
+[ "$(_g5 G5)" = "FAIL" ] \
+  && pass "audit: G5 fails a section whose only bullet is a pointer, not a constraint" \
+  || fail "audit: G5 fails a pointer-only section (got $(_g5 G5))"
+g5_seed '# bundle
+## go.instructions.md — matched **/*.go
+- errors wrapped with %w, never %v
+- no naked returns in exported funcs'
+[ "$(_g5 G5)" = "PASS" ] \
+  && pass "audit: G5 passes once the section carries real distilled constraints" \
+  || fail "audit: G5 passes on a substantive section (got $(_g5 G5))"
+rm -rf "$G5_ISO"
+
+# G6 — THE LAST HOP: did the brief carry the bundle, as observed at dispatch time? All five
+# states, because this check replaced a manual item and a wrong verdict here either blocks a
+# correct run or launders the exact failure the gate exists for.
+g6_brief() { # g6_brief <matched> <total> <declared_na> <thin> <below_min>
+  printf '{"t":"2026-01-01T05:00:00Z","tool":"Task","lines_total":%s,"lines_matched":%s,"min_lines":3,"declared_na":%s,"thin":%s,"below_min":%s}' \
+    "$2" "$1" "$3" "$4" "$5"; }
+g6_seed() { # g6_seed <run-id> <briefs-json>
+  aud_seed "$1"
+  jq --argjson b "$2" '.briefs = $b' "$AUD_RUNS/$1.json" > "$AUD_RUNS/t" && mv "$AUD_RUNS/t" "$AUD_RUNS/$1.json"; }
+
+g6_seed g6thin "[$(g6_brief 0 4 false true false)]"
+[ "$(aud_verdict g6thin G6)" = "FAIL" ] \
+  && pass "audit: G6 fails a brief that carried NONE of the bundle (the filename-passing mode)" \
+  || fail "audit: G6 fails a zero-content brief (got $(aud_verdict g6thin G6))"
+g6_seed g6ok "[$(g6_brief 4 4 false false false)]"
+[ "$(aud_verdict g6ok G6)" = "PASS" ] \
+  && pass "audit: G6 passes when every brief carried the bundle's constraints" \
+  || fail "audit: G6 passes on governed briefs (got $(aud_verdict g6ok G6))"
+g6_seed g6slice "[$(g6_brief 1 6 false false true)]"
+[ "$(aud_verdict g6slice G6)" = "WARN" ] \
+  && pass "audit: G6 warns (never fails) on a narrow cluster slice — a fan-out brief is a subset" \
+  || fail "audit: G6 warns on a thin-but-nonzero slice (got $(aud_verdict g6slice G6))"
+g6_seed g6na "[$(g6_brief 0 4 true false false)]"
+[ "$(aud_verdict g6na G6)" = "PASS" ] \
+  && pass "audit: G6 accepts an explicit 'GOVERNANCE: n/a' declaration for a research dispatch" \
+  || fail "audit: G6 accepts a declared n/a dispatch (got $(aud_verdict g6na G6))"
+# Honesty rule: no briefs recorded and the hook unwired must WARN, never PASS — otherwise an
+# unobserved run reads exactly like a compliant one.
+[ "$(aud_verdict clean G6)" = "WARN" ] \
+  && pass "audit: G6 warns rather than passing when track-brief.sh is unwired" \
+  || fail "audit: G6 warns when the brief hook is unwired (got $(aud_verdict clean G6))"
+
+# G3 — a deliberate mid-core RE-PIN must stay legal. The old check compared the single
+# overwritten governance_bundle.t against the first dispatch, so re-distilling after a later
+# cluster widened the matched set moved that stamp past the dispatch and FAILED the run for
+# doing the right thing. The stamp history is what makes the accurate question askable.
+aud_seed g3repin
+jq '.trace = [{"t":"2026-01-01T00:30:00Z","kind":"subagent","event":"SubagentStop","agent_id":"a1"},
+              {"t":"2026-01-01T03:00:00Z","kind":"subagent","event":"SubagentStop","agent_id":"a2"}]
+    | .governance_stamps = [{"t":"2026-01-01T00:00:00Z","path":"g","sha":"s1","self_reported":true},
+                            {"t":"2026-01-01T02:00:00Z","path":"g","sha":"s2","self_reported":true}]
+    | .governance_bundle.t = "2026-01-01T02:00:00Z"' \
+  "$AUD_RUNS/g3repin.json" > "$AUD_RUNS/t" && mv "$AUD_RUNS/t" "$AUD_RUNS/g3repin.json"
+[ "$(aud_verdict g3repin G3)" = "PASS" ] \
+  && pass "audit: G3 allows a mid-core re-pin (dispatch between two stamps is governed)" \
+  || fail "audit: G3 allows a mid-core re-pin (got $(aud_verdict g3repin G3))"
+# …while a dispatch that precedes EVERY stamp is still ungoverned.
+jq '.trace += [{"t":"2025-12-31T00:00:00Z","kind":"subagent","event":"SubagentStop","agent_id":"a0"}]' \
+  "$AUD_RUNS/g3repin.json" > "$AUD_RUNS/t" && mv "$AUD_RUNS/t" "$AUD_RUNS/g3repin.json"
+[ "$(aud_verdict g3repin G3)" = "FAIL" ] \
+  && pass "audit: G3 still fails a dispatch that precedes every governance pin" \
+  || fail "audit: G3 fails a pre-pin dispatch (got $(aud_verdict g3repin G3))"
+# G1 reports a re-pin as PASS, not as the "changed after pinning" WARN.
+[ "$(aud_verdict g3repin G1)" = "PASS" ] \
+  && pass "audit: G1 treats a re-pinned bundle as clean when it matches the latest pin" \
+  || fail "audit: G1 accepts a re-pinned bundle (got $(aud_verdict g3repin G1))"
 
 # Each violation must be caught.
 aud_seed g1miss; jq '.governance_bundle.path="/nonexistent/gone.md"' "$AUD_RUNS/g1miss.json" > "$AUD_RUNS/t" && mv "$AUD_RUNS/t" "$AUD_RUNS/g1miss.json"
@@ -1297,6 +1411,22 @@ aud_compact i4nodisp '[{"t":"2026-01-01T12:00:00Z"}]' '[]' "$_disp"
   && pass "audit: I4 warns rather than passing when track-compact.sh is unwired" \
   || fail "audit: I4 warns rather than passing when track-compact.sh is unwired"
 
+# I4's second half — the re-read is not the invariant; the brief carrying it is. A run that
+# re-read the bundle and then briefed from memory anyway is the exact silent degradation this
+# gate exists for, and track-brief.sh makes that join decidable.
+aud_compact i4used '[{"t":"2026-01-01T10:00:00Z"}]' '[{"t":"2026-01-01T10:30:00Z"}]' "$_disp"
+jq '.briefs = [{"t":"2026-01-01T10:45:00Z","tool":"Task","lines_total":4,"lines_matched":0,
+                "min_lines":3,"declared_na":false,"thin":true,"below_min":false}]' \
+  "$AUD_RUNS/i4used.json" > "$AUD_RUNS/t" && mv "$AUD_RUNS/t" "$AUD_RUNS/i4used.json"
+[ "$(aud_verdict i4used I4)" = "FAIL" ] \
+  && pass "audit: I4 fails when the bundle was re-read but the next brief still carried none of it" \
+  || fail "audit: I4 fails a re-read followed by an empty brief (got $(aud_verdict i4used I4))"
+jq '.briefs[0] |= (.lines_matched = 4 | .thin = false)' \
+  "$AUD_RUNS/i4used.json" > "$AUD_RUNS/t" && mv "$AUD_RUNS/t" "$AUD_RUNS/i4used.json"
+[ "$(aud_verdict i4used I4)" = "PASS" ] \
+  && pass "audit: I4 passes when the post-compaction brief carried the re-read bundle" \
+  || fail "audit: I4 passes when the re-read was actually used (got $(aud_verdict i4used I4))"
+
 # Regression: track-trace.sh stores the RAW hook event name ("SubagentStop"), never
 # "start"/"stop". The old selector matched neither, so every check reading trace[] for a
 # dispatch — G3 above all — silently reported "no subagent activity" on real runs.
@@ -1397,6 +1527,143 @@ if grep -q 'track-compact' "$SCRIPT_DIR/../templates/claude-settings.json" 2>/de
   pass "compact: wired in both the Claude Code and Copilot hook templates"
 else
   fail "compact: wired in both the Claude Code and Copilot hook templates"
+fi
+
+# ---------------------------------------------------------------------------
+# SUITE 9e -- track-brief.sh (did the brief carry the governance?)
+# ---------------------------------------------------------------------------
+section "track-brief.sh"
+# The recorder behind G6. It reads the outgoing brief at PreToolUse — the only place the brief
+# is observable — so its matcher decides whether the pipeline's last unobserved hop stays
+# unobserved. Wrong in either direction is costly: a missed match FAILs a compliant run, a
+# false match launders the filename-passing defect into a PASS.
+BRF="$SCRIPTS_DIR/track-brief.sh"
+[ -x "$BRF" ] || chmod +x "$BRF"
+BRF_RUNS="$(mktemp -d)"; BRF_GOV="$BRF_RUNS/gov.md"
+cat > "$BRF_GOV" <<'BRFGOV'
+# Governance bundle — run b
+Surface: **/*.go
+
+## go.instructions.md — matched **/*.go
+- errors wrapped with %w, never %v
+- no naked returns in exported funcs
+
+## security-and-owasp.instructions.md — matched
+- pinned image digests, never :latest
+- no default credentials committed; env placeholder + documented dev fallback
+BRFGOV
+brf_reset() {
+  jq -nc --arg p "$BRF_GOV" '{run_id:"b",v:1,trace:[],evidence:[],tool_calls:0,
+     governance_bundle:{path:$p,sha:"s1",t:"2026-01-01T00:00:00Z",self_reported:true}}' \
+    > "$BRF_RUNS/b.json"; }
+brf_fire() { # brf_fire <prompt> [env...]
+  local p="$1"; shift || true
+  jq -nc --arg pr "$p" '{hook_event_name:"PreToolUse",tool_name:"Task",tool_input:{prompt:$pr}}' \
+    | env RUN_ID=b RUNS_DIR="$BRF_RUNS" "$@" bash "$BRF" >/dev/null 2>&1 || true; }
+brf_last() { jq -r "$1" "$BRF_RUNS/b.json" 2>/dev/null || echo ERR; }
+
+brf_reset
+brf_fire '- errors wrapped with %w, never %v
+- no naked returns in exported funcs
+- pinned image digests, never :latest'
+[ "$(brf_last '.briefs[-1].lines_matched')" = "3" ] && [ "$(brf_last '.briefs[-1].thin')" = "false" ] \
+  && pass "brief: counts the bundle constraint lines a brief embedded" \
+  || fail "brief: counts embedded constraints (got matched=$(brf_last '.briefs[-1].lines_matched'))"
+
+# The defect the whole gate exists for: names the files, transfers nothing.
+brf_reset
+brf_fire 'Implement the go cluster. Follow go.instructions.md and security-and-owasp.instructions.md.'
+[ "$(brf_last '.briefs[-1].thin')" = "true" ] && [ "$(brf_last '.briefs[-1].lines_matched')" = "0" ] \
+  && pass "brief: a filename-only brief scores zero and is flagged thin" \
+  || fail "brief: filename-only brief flagged thin (got $(brf_last '.briefs[-1]'))"
+# …and it records WHICH sections were merely named, so the failure is legible, not just numeric.
+[ "$(brf_last '[.briefs[-1].sections[]?] | length')" = "2" ] \
+  && pass "brief: records the sections a brief named (recorded, never scored)" \
+  || fail "brief: records named sections (got $(brf_last '.briefs[-1].sections'))"
+
+# Re-wrapped, back-ticked, re-punctuated: still the same constraint. Matching must survive
+# normal prose, or every honest brief trips the gate and the gate gets turned off.
+brf_reset
+brf_fire 'Constraints: (a) errors wrapped with `%w`, never `%v`; (b) pinned image digests, never `:latest`.'
+[ "$(brf_last '.briefs[-1].lines_matched')" = "2" ] \
+  && pass "brief: matching tolerates re-wording, back-ticks and punctuation" \
+  || fail "brief: tolerant matching (got matched=$(brf_last '.briefs[-1].lines_matched'))"
+
+# A fan-out brief carries only its cluster — below the threshold but NOT a violation.
+brf_reset
+brf_fire '- errors wrapped with %w, never %v'
+[ "$(brf_last '.briefs[-1].thin')" = "false" ] && [ "$(brf_last '.briefs[-1].below_min')" = "true" ] \
+  && pass "brief: a narrow cluster slice is below_min, not thin" \
+  || fail "brief: cluster slice below_min (got $(brf_last '.briefs[-1]'))"
+
+# The explicit opt-out — same rule as the bundle's ABSENT lines.
+brf_reset
+brf_fire 'GOVERNANCE: n/a — read-only research, returns findings only
+Find where retries are implemented.'
+[ "$(brf_last '.briefs[-1].declared_na')" = "true" ] && [ "$(brf_last '.briefs[-1].thin')" = "false" ] \
+  && pass "brief: an explicit 'GOVERNANCE: n/a' declaration clears a research dispatch" \
+  || fail "brief: declared n/a clears the dispatch (got $(brf_last '.briefs[-1]'))"
+
+# Everything that is not a dispatch must be a no-op — this hook fires on every tool call on
+# surfaces that cannot scope by matcher.
+brf_reset
+printf '%s' '{"hook_event_name":"PreToolUse","tool_name":"Read","tool_input":{"file_path":"main.go"}}' \
+  | RUN_ID=b RUNS_DIR="$BRF_RUNS" bash "$BRF" >/dev/null 2>&1 || true
+printf '%s' '{"hook_event_name":"PreToolUse","tool_name":"Task","tool_input":{"file_path":"x"}}' \
+  | RUN_ID=b RUNS_DIR="$BRF_RUNS" bash "$BRF" >/dev/null 2>&1 || true
+printf '%s' '{"hook_event_name":"PostToolUse","tool_name":"Task","tool_input":{"prompt":"anything"}}' \
+  | RUN_ID=b RUNS_DIR="$BRF_RUNS" bash "$BRF" >/dev/null 2>&1 || true
+[ "$(brf_last '.briefs // [] | length')" = "0" ] \
+  && pass "brief: non-dispatch tool, promptless payload, and wrong event are all no-ops" \
+  || fail "brief: ignores what it should (got $(brf_last '.briefs'))"
+
+# Recording is the default; denial is opt-in. A false deny costs a dispatch, so the blocking
+# form must be a choice — and when chosen it must deny only the zero-content case.
+brf_reset
+_bout="$(printf '%s' '{"hook_event_name":"PreToolUse","tool_name":"Task","tool_input":{"prompt":"just follow go.instructions.md"}}' \
+  | RUN_ID=b RUNS_DIR="$BRF_RUNS" bash "$BRF" 2>/dev/null)"; _brc=$?
+[ "$_brc" -eq 0 ] && pass "brief: records without blocking by default" \
+  || fail "brief: default must not block (exit=$_brc)"
+# Deny exits 2 by design, so the output has to be captured before it is inspected — piping
+# straight into grep under `set -o pipefail` reports the hook's exit, not whether it denied.
+brf_deny_out() { # brf_deny_out <prompt>
+  jq -nc --arg pr "$1" '{hook_event_name:"PreToolUse",tool_name:"Task",tool_input:{prompt:$pr}}' \
+    | { RUN_ID=b RUNS_DIR="$BRF_RUNS" TRACK_BRIEF_DENY=1 bash "$BRF" 2>/dev/null || true; }; }
+brf_reset
+case "$(brf_deny_out 'just follow go.instructions.md')" in
+  *'"deny"'*) pass "brief: TRACK_BRIEF_DENY=1 denies a zero-content dispatch" ;;
+  *) fail "brief: TRACK_BRIEF_DENY=1 denies a zero-content dispatch" ;;
+esac
+brf_reset
+case "$(brf_deny_out '- errors wrapped with %w, never %v
+- no naked returns in exported funcs
+- pinned image digests, never :latest')" in
+  *'"deny"'*) fail "brief: deny mode must still allow a governed brief" ;;
+  *) pass "brief: deny mode still allows a governed brief" ;;
+esac
+
+# No bundle pinned -> nothing to carry; must not manufacture a violation (G1 owns that failure).
+jq -nc '{run_id:"b",v:1,trace:[],evidence:[],tool_calls:0}' > "$BRF_RUNS/b.json"
+brf_fire 'anything at all'
+[ "$(brf_last '.briefs[-1].thin')" = "false" ] \
+  && pass "brief: no bundle pinned -> the brief is recorded but never flagged thin" \
+  || fail "brief: no bundle pinned must not flag thin (got $(brf_last '.briefs[-1]'))"
+
+# Bundle convention: no RUN_ID -> silent no-op.
+printf '%s' '{"hook_event_name":"PreToolUse","tool_name":"Task","tool_input":{"prompt":"x"}}' \
+  | RUNS_DIR="$BRF_RUNS" bash "$BRF" >/dev/null 2>&1 \
+  && pass "brief: no RUN_ID -> silent no-op" || fail "brief: no RUN_ID -> silent no-op"
+rm -rf "$BRF_RUNS"
+
+# Wired on BOTH surfaces, or G6 can only ever WARN. Claude Code scopes by matcher (Task);
+# Copilot cannot, so the script's own tool-name branch is what keeps it cheap there.
+if grep -q 'track-brief' "$SCRIPT_DIR/../templates/track-hooks.json" 2>/dev/null \
+   && jq -e '[.hooks.PreToolUse[]? | select((.matcher // "") | test("Task"))
+             | .hooks[]?.command] | map(test("track-brief")) | any' \
+        "$SCRIPT_DIR/../templates/claude-settings.json" >/dev/null 2>&1; then
+  pass "brief: wired on both surfaces (Copilot preToolUse + Claude PreToolUse/Task)"
+else
+  fail "brief: wired on both surfaces (Copilot preToolUse + Claude PreToolUse/Task)"
 fi
 
 section "track-tokens.sh"
@@ -1990,7 +2257,7 @@ EXPECTED_SCRIPTS=(
   track-guard.sh track-preflight.sh track-reconcile.sh
   track-evidence.sh track-evidence-gate.sh
   track-meter.sh track-trace.sh track-sentinel.sh track-notify.sh track-report.sh
-  track-deps.sh
+  track-deps.sh track-compact.sh track-brief.sh track-note.sh track-audit.sh
 )
 _all_exist=1
 for _s in "${EXPECTED_SCRIPTS[@]}"; do

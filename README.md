@@ -172,8 +172,8 @@ All modes share: `using-git-worktrees` (isolation), `verification-before-complet
 
 > **Governance note.** Instruction files reach the work in two different ways, and the split is deliberate.
 >
-> - **Authoring-time (maker) constraints** — every `.github/instructions/*.instructions.md` whose `applyTo` glob matches the changed files (`go.instructions.md` for `**/*.go`, `agent-skills.instructions.md` for `**/skills/**/SKILL.md`, …). The skill's Step 4 discovers these by *listing the directory and matching globs at run time*, distils them, and embeds the content in every maker brief. `track-audit.sh` check **G2** re-derives the same matched set and fails a run whose bundle omits one.
-> - **Review-time rubric** — `code-review-generic.instructions.md` carries **no `applyTo`**, so it is never auto-injected while code is written. It is loaded at the review step and embedded in the `requesting-code-review` / stage-2 reviewer brief. This keeps ~400 lines of generic rubric out of every implementation brief, where it only restated the language files.
+> - **Authoring-time (maker) constraints** — every `.github/instructions/*.instructions.md` whose `applyTo` glob matches the changed files (`go.instructions.md` for `**/*.go`, `ai-agent-engineering.instructions.md` + `ai-agent-security.instructions.md` for agent/tool/MCP/prompt paths, …). The skill's Step 4 discovers these by *listing the directory and matching globs at run time*, distils them, and embeds the content in every maker brief. `track-audit.sh` check **G2** re-derives the same matched set and fails a run whose bundle omits one.
+> - **On-demand files** — two files carry **no `applyTo`**, so they are never auto-injected while code is written and G2 never requires them. `code-review-generic.instructions.md` is loaded at the review step and embedded in the `requesting-code-review` / stage-2 reviewer brief — keeping ~400 lines of generic rubric out of every implementation brief, where it only restated the language files. `agent-skills.instructions.md` is a **design-time authoring guide, invoked explicitly**: read it when a human asks for a *new* skill or a restructure, not because a diff happened to touch a `SKILL.md`.
 >
 > Editor `applyTo` injection populates the main session only and never propagates into a dispatched subagent (and Claude Code does not auto-inject at all), which is why the skill passes **content** rather than relying on inheritance — the behavior is then identical on both surfaces.
 
@@ -224,6 +224,7 @@ Scripts are listed in the order they typically fire across a track's lifetime:
 | `track-deps.sh` *(per-track)* | skill-invoked (Step 1, via preflight) | **Lifecycle** | 🔒 Verify the repo's pinned tool versions (`skill-deps.json`) — fail hard on a required lock violation, warn on out-of-range when non-strict; result TTL-cached (`TRACK_DEPS_CACHE_TTL_HOURS`, default 72h) in `runs/.deps-cache.json` |
 | `track-reconcile.sh` *(per-track)* | `SessionStart` | **Lifecycle** | ♻️ Recover state from committed history + run record; stash untrusted work |
 | `track-guard.sh` *(repo-policy)* | `PreToolUse` | **Scope & guard** | 🛡️ Deny edits outside writable scope, frozen paths, artifacts, or destructive ops |
+| `track-brief.sh` *(per-track)* | `PreToolUse` (dispatch tools) | **Governance** | 📨 Read the outgoing **subagent brief** and count how many of the pinned bundle's constraint lines it carries — the hop nothing used to observe. Feeds `G6`; opt-in denial via `TRACK_BRIEF_DENY=1` |
 | `track-evidence.sh` *(per-track)* | `PostToolUse` | **Evidence & quality** | 📸 Capture test output + code fingerprint — what the tool saw, not a model claim |
 | `track-meter.sh` *(repo-policy)* | `PostToolUse` | **Governance** | 🔢 Count tool calls + heartbeat; hard-stop at `TRACK_MAX_TOOL_CALLS` |
 | `track-trace.sh` *(per-track)* | `SubagentStart/Stop` | **Observability** | 🔍 Record **why** each subagent was spawned (`agent_description`) + stop reason |
@@ -302,14 +303,16 @@ The evidence gate proves the tests *passed*. It cannot prove the run was **disci
 
 | Group | ID | What it checks |
 |---|---|---|
-| **Governance** | `G1` | A governance bundle was pinned, is present on disk, and is unchanged since it was pinned |
+| **Governance** | `G1` | A governance bundle was pinned, is present on disk, and is unchanged since its **latest** pin (re-pinning mid-core is the sanctioned way to widen it; an edit with no re-pin still WARNs) |
 | | `G2` | The bundle mentions every `.github/instructions/*` file whose `applyTo` glob matches the diff |
-| | `G3` | Governance was stamped **before** the first subagent dispatch (a brief built earlier carried no constraints) — *mixed provenance: the stamp is model-written, the dispatch time is hook-written, so the verdict names whether a hook-observed bundle read corroborated it* |
+| | `G3` | **Every** subagent dispatch was preceded by a governance pin — read from the append-only `governance_stamps[]`, so a deliberate mid-core re-pin is legal while a dispatch with no pin before it fails — *mixed provenance: the stamps are model-written, the dispatch times hook-written, so the verdict names whether a hook-observed bundle read corroborated it* |
 | | `G4` | A diff touching a trust boundary (auth, secrets, migrations, Dockerfile…) pulled in `security-and-owasp` |
+| | `G5` | Each matched file's bundle section carries **≥2 actionable constraints**, not just a heading — `G2` is a substring test that a hollow section satisfies; `G5` reads the section body |
+| | `G6` | **Every dispatched brief actually carried the bundle's constraints**, counted in the brief text by `track-brief.sh` at `PreToolUse`. Zero lines with a bundle pinned is a FAIL (the *"follow `go.instructions.md`"* mode); a narrow cluster slice WARNs; a research dispatch clears itself with an explicit `GOVERNANCE: n/a — <why>` |
 | **Isolation & resume** | `I1` | Work is **not** on the default branch — a linked worktree is the expected form |
 | | `I2` | Work landed on the branch confirmed at preflight (approved plan ≠ actual work is surfaced) |
 | | `I3` | `track-reconcile.sh` ran and re-anchored from durable state (never re-read the worktree) |
-| | `I4` | **The compaction gate** — between every compaction and the next dispatch there is a governance-bundle re-read (arithmetic over `compactions[]` × `governance_reads[]`, both hook-observed) |
+| | `I4` | **The compaction gate** — between every compaction and the next dispatch there is a governance-bundle re-read, **and** the first brief after the compaction carried the bundle (arithmetic over `compactions[]` × `governance_reads[]` × `briefs[]`, all hook-observed). A re-read followed by an empty brief is still a brief built from dropped context |
 | **Position** | `P1` | At least one phase was stamped — without it a compacted session has no durable position |
 | | `P2` | The phase log covers the canonical gate sequence for the run's mode (scaffold / story / refactor) |
 | **Maker / checker** | `M1` | The reviewer was a distinct subagent from the implementer (≥ 2 distinct trace ids) |
@@ -445,7 +448,7 @@ Note the split: only the two *ceiling* states are mechanical. `blocked` in parti
 
 **Two provenance classes, never mixed.** `trace[]` is hook-observed fact (subagent boundaries). Everything from `track-note.sh` — `phase`, `governance_bundle`, `status`, `skills[]`, `iterations` — is the model's own claim, tagged `self_reported: true` for exactly that reason.
 
-**Position fields** (`phase`, `governance_bundle`) are what let a run survive a **context compaction**. Compaction happens inside a live session, so no `SessionStart` fires and `track-reconcile.sh` never re-runs — anything held only in the conversation is simply gone, starting with the governance excerpts every subagent brief depends on. Stamping `phase` at each boundary and persisting the bundle to `runs/<RUN_ID>.governance.md` puts that state in files, so `track-reconcile.sh` can hand back a `resume_action` instead of the model guessing from the worktree. `track-compact.sh` closes the loop mechanically: it records `compactions[]` when a compaction fires and `governance_reads[]` when the pinned bundle is re-read from disk, so "was the bundle re-read after the compaction and before the next dispatch?" (`track-audit.sh`'s I4 check) becomes timestamp arithmetic over durable artifacts rather than a claim taken on trust.
+**Position fields** (`phase`, `governance_bundle`) are what let a run survive a **context compaction**. Compaction happens inside a live session, so no `SessionStart` fires and `track-reconcile.sh` never re-runs — anything held only in the conversation is simply gone, starting with the governance excerpts every subagent brief depends on. Stamping `phase` at each boundary and persisting the bundle to `runs/<RUN_ID>.governance.md` puts that state in files, so `track-reconcile.sh` can hand back a `resume_action` instead of the model guessing from the worktree. `track-compact.sh` closes the loop mechanically: it records `compactions[]` when a compaction fires and `governance_reads[]` when the pinned bundle is re-read from disk, so "was the bundle re-read after the compaction and before the next dispatch?" (`track-audit.sh`'s I4 check) becomes timestamp arithmetic over durable artifacts rather than a claim taken on trust. `track-brief.sh` finishes the thought: it records what the **next brief actually contained**, so a run that dutifully re-read the bundle and then briefed from memory anyway fails I4 too — re-reading a file is not the invariant, the brief carrying the constraints is.
 
 **PR body** (`templates/pr-body.md`). Two-zone template:
 
@@ -480,6 +483,7 @@ Grep any one surface → reconstruct the whole run. `runs/summary.md` aggregates
 - `trace[]` subagent start/stop events (`track-trace.sh`, every `SubagentStart/Stop`)
 - Evidence fingerprints + pass/fail (`track-evidence.sh`, on test tool calls)
 - `compactions[]` + `governance_reads[]` (`track-compact.sh`, on `PreCompact/PostCompact` + bundle re-reads)
+- `briefs[]` — how much of the pinned bundle each outgoing subagent brief actually carried (`track-brief.sh`, on `PreToolUse` for dispatch tools)
 - Token estimate + PR-body Auto block (`track-tokens.sh` + `track-report.sh`, at `Stop`)
 
 **What is self-reported** (model's claim, `self_reported:true`):
@@ -501,13 +505,14 @@ Grep any one surface → reconstruct the whole run. `runs/summary.md` aggregates
   instructions/                       # reusable tech-stack guidelines — matched by applyTo glob
     security-and-owasp.instructions.md   # applyTo '**' — always in scope
     ai-agent-security.instructions.md    # agentic surface: tools, MCP, memory, budgets (ASI01–ASI10)
+    ai-agent-engineering.instructions.md # agentic surface: loop, state, context, tools, evals, telemetry
     go.instructions.md
     python.instructions.md
     reactjs.instructions.md
     state-management.instructions.md
     backing-services.instructions.md  # PostgreSQL, Redis, NATS, Qdrant, MinIO, OIDC, Caddy
     devops-cicd.instructions.md       # Docker, Compose, Makefile, GitHub Actions
-    agent-skills.instructions.md      # authoring guidelines for SKILL.md files
+    agent-skills.instructions.md      # no applyTo — design-time guide, read when authoring a skill
     code-review-generic.instructions.md  # no applyTo — loaded only at the review step
   skills/
     sso-single-branch-development/

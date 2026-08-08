@@ -36,6 +36,8 @@
 #   track-note.sh loop  [phase]              iterations += 1  (+ optional phase label on the mark)
 #   track-note.sh phase <mode> <step>        SET phase={mode,step,t} (overwritten) + append phase_log[]
 #   track-note.sh governance <file>          SET governance_bundle={path,sha,t} — the persisted bundle
+#                                            AND append the same to governance_stamps[] (the pin
+#                                            HISTORY, so a legitimate mid-core re-pin is on record)
 #   track-note.sh status <state> [blocker] [next_step]
 #                                            SET status (+ blocker/next_step). state must be one of
 #                                            success | blocked | no-progress | budget-exceeded
@@ -144,8 +146,17 @@ case "$sub" in
     [ -n "$file" ] || { printf '%s\n' "track-note: 'governance' needs a file path." >&2; rm -f "$tmp"; exit 2; }
     [ -f "$file" ] || { printf '%s\n' "track-note: governance bundle '$file' does not exist — persist it first." >&2; rm -f "$tmp"; exit 2; }
     sha="$( { if command -v shasum >/dev/null 2>&1; then shasum "$file"; else sha1sum "$file"; fi; } | cut -d' ' -f1)"
+    # `governance_bundle` is the CURRENT pin (overwritten); `governance_stamps[]` is the
+    # history (append-only). Both exist because a run legitimately re-pins mid-core: when a
+    # later cluster drags in an instruction file the first pass did not match, the correct
+    # move is re-distil → re-pin, and with only the overwritten field on record that looked
+    # identical to "governance was stamped AFTER the first dispatch" — G3 failed the run for
+    # doing the right thing. The history lets G3 ask the accurate question instead: was every
+    # dispatch preceded by SOME pin?
     jq --arg t "$ts" --arg p "$file" --arg sha "$sha" \
       '.governance_bundle = {path:$p, sha:$sha, t:$t, self_reported:true}
+       | .governance_stamps = ((.governance_stamps // [])
+           + [{t:$t, path:$p, sha:$sha, self_reported:true}])
        | .started_ts = (.started_ts // $t) | .last_ts = $t' \
       "$rec" >"$tmp" && mv "$tmp" "$rec"
     ;;

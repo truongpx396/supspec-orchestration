@@ -1,6 +1,6 @@
 ---
 name: sso-single-branch-development
-version: 0.3.0
+version: 0.4.0
 description: 'Run a full end-to-end implementation pipeline on one branch/worktree in one of three execution cores — scaffold (non-behavioral bootstrap batch), story (TDD for new/changed behavior), or refactor (behavior-preserving keep-green) — with two-stage spec-compliance + code-quality verification, evidence capture, optional Copilot hooks, and draft-PR handoff. Use when asked to implement one feature, fix one bug, refactor existing code, or do foundation/scaffold setup with strong quality gates but without multi-track parallel orchestration.'
 ---
 
@@ -80,8 +80,9 @@ which increment you were on, your governance excerpts. Three habits make the run
    re-read `runs/<RUN_ID>.governance.md` before the next dispatch. Rebuilding position by *reading
    the worktree* is the failure Step 2 exists to prevent — that prohibition applies just as much
    after a compaction as after a crash. **This one is now audited, not trusted:** `track-compact.sh`
-   records the compaction and the re-read, and `track-audit.sh`'s `I4` fails a run that dispatched a
-   subagent after a compaction without re-reading the bundle in between.
+   records the compaction and the re-read, `track-brief.sh` records what the next brief carried, and
+   `track-audit.sh`'s `I4` fails a run that dispatched a subagent after a compaction without
+   re-reading the bundle in between — **or** that re-read it and then sent an empty brief anyway.
 
 ## Pipeline (One Branch)
 
@@ -177,7 +178,15 @@ subagent vs ⚙️ script).
      subagents with filenames, which is the defect below.
    - **Content, not filenames, into every brief** — `dispatching-parallel-agents` fan-out makers and
      `subagent-driven-development` per-task makers/reviewers alike. A brief naming
-     `go.instructions.md` gives an isolated-context subagent nothing to act on.
+     `go.instructions.md` gives an isolated-context subagent nothing to act on. **This is now
+     audited, not trusted:** `track-brief.sh` reads each outgoing brief at dispatch time and
+     `track-audit.sh`'s `G6` **fails** a dispatch whose brief carried none of the bundle's
+     constraints. A dispatch that genuinely needs none (read-only research) declares it in the
+     brief: `GOVERNANCE: n/a — <why>`.
+   - **Widened the surface mid-core? Re-distil and re-pin.** Calling `track-note.sh governance`
+     again is the sanctioned move — the stamp history is append-only, so `G3` asks whether every
+     dispatch had a pin before it rather than penalizing the second pin. Editing the bundle without
+     re-pinning is what WARNs.
    - **Governance is a *maker* obligation, not just a checker backstop.** Both ends is deliberate
      defense-in-depth: the brief prevents the violation, the review catches the remainder.
      **No-ops only when the files genuinely don't exist**, never by omission.

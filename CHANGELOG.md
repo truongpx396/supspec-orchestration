@@ -8,6 +8,60 @@ contracts are still stabilizing — matching the convention used by
 Each skill's `SKILL.md` frontmatter carries its own `version` field; this file tracks the
 whole-repo release that ships them together.
 
+## [0.6.0] - 2026-08-08
+
+### The governance bundle now has to reach the brief — mechanically (`sso-single-branch-development` 0.3.0 → 0.4.0)
+
+Every governance check in this pipeline was a **proxy** for one hop nobody watched. `G1` proved the
+bundle existed, `G2` that it covered the diff, `G3` that it was pinned before the first dispatch, `I4`
+that it was re-read after a compaction — and then the audit's own NOT-CHECKED list admitted the
+load-bearing step was taken on trust: *"A5 — maker briefs embed governance CONTENT, not filenames;
+open a real dispatch and look."* A run could pass every mechanical gate and still hand its subagents
+`"follow go.instructions.md"`, which is precisely the defect the whole gate exists to prevent.
+
+A `PreToolUse` hook on the dispatch tool **does** see the brief. That closes the loop.
+
+- **New hook: `track-brief.sh`** (`PreToolUse`, dispatch tools). Reads the outgoing brief
+  (`tool_input.prompt`) before the subagent starts and counts how many of the pinned bundle's
+  constraint lines it actually contains, recording `briefs[]` = `{t, tool, bundle_sha, lines_total,
+  lines_matched, min_lines, declared_na, thin, below_min, sections?}`. Both sides are normalized
+  (lowercase, punctuation collapsed), so a re-wrapped or back-ticked constraint still matches while a
+  brief that names only the *file* matches nothing. Wired on both surfaces; **records by default**,
+  denies only under `TRACK_BRIEF_DENY=1`.
+- **New audit check `G6`** — a brief that carried **zero** bundle constraints with a bundle pinned is
+  a **FAIL**. A brief carrying some but fewer than `TRACK_BRIEF_MIN_LINES` (default 3) is a WARN, not
+  a FAIL: a fan-out brief legitimately embeds only its own cluster's sections, and no hook can tell a
+  correct slice from a lazy one. A dispatch that genuinely needs no governance (read-only research)
+  clears itself with an explicit `GOVERNANCE: n/a — <why>` line — the same "state ABSENT, never no-op
+  by omission" rule the bundle itself follows.
+- **New audit check `G5`** — `G2` was a substring test, so a bundle section consisting of a bare
+  heading (or one `- see the file` bullet) satisfied coverage while transferring nothing any brief
+  could embed. `G5` reads the section body and requires ≥2 substantive constraints per matched
+  instruction file (`TRACK_GOV_MIN_BULLETS`).
+- **`I4` gained its second half.** Re-reading the bundle was never the invariant — the *next brief
+  carrying it* is. `I4` now also fails a run where the bundle was re-read after a compaction and the
+  first brief after it still went out empty, which is the exact shape of the silent post-compaction
+  degradation.
+- **Mid-core re-pinning is legal now, and gated.** `track-note.sh governance` appends to a new
+  append-only `governance_stamps[]` alongside the overwritten `governance_bundle`. `G3` asks whether
+  **every** dispatch was preceded by *some* pin instead of comparing one overwritten timestamp against
+  the first dispatch — the old form **failed a run for doing the right thing** when a later cluster
+  widened the matched set and the bundle was correctly re-distilled and re-pinned. `G1` compares
+  against the latest pin and reports how many briefs were built from an earlier version.
+- **The honesty list shrank on evidence, not by assertion.** `A5` narrowed from "did content make the
+  hop" to "was it the *right* content for that cluster" (G6 counts lines, it cannot judge relevance);
+  `B2` left the manual list entirely, since `I4` + `G6` now decide it. The PR-body tier disclosure was
+  updated to match, including which checks are artifact-derived vs mixed-provenance.
+
+### Fixed: the audit test section read the contributor's working tree
+
+`G2`/`G4`/`G5` resolve `applyTo` globs against the **real** git diff, while the audit tests seed a
+fake bundle — so editing this repo's own `SKILL.md` (matched by the `ai-agent-*` globs) made the
+seeded bundle "incomplete" and flipped `G2` to FAIL, taking down every clean-run assertion for reasons
+unrelated to the change. The section now runs from an isolated fixture repo with a neutral diff;
+`G2`/`G4`/`G5`/`G6`'s own positive and negative paths are asserted in purpose-built repos where the
+diff *is* the fixture. Suite: 284 → **310** tests.
+
 ## [0.5.0] - 2026-08-07
 
 ### Renamed the 3 orchestration skills with an `sso-` prefix
