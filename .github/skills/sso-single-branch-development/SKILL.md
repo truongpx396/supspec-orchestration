@@ -158,15 +158,16 @@ subagent vs ⚙️ script).
    failing tests up front via the RED batch (refactor mode instead pins the existing suite green up
    front); (b) SDD's stage-2 review is quality-only, so every review also applies the standing
    **governance** — the project constitution (`.specify/memory/constitution.md`, if present) and the
-   `.github/instructions/*` whose `applyTo` globs match the changed files (always includes
-   `code-review-generic.instructions.md` with `applyTo: '**'`) — and any trust-boundary
-   change additionally applies `security-and-owasp.instructions.md`.
+   `.github/instructions/*` whose `applyTo` globs match the changed files — and any trust-boundary
+   change additionally applies `security-and-owasp.instructions.md`. The review rubric
+   (`code-review-generic.instructions.md`, no `applyTo`) is loaded at the review step and embedded in
+   the reviewer brief, not at core entry.
 
    **Governance gate — mandatory, once at core entry, before the mode guard and before any code
    is written or subagent dispatched.** Read [`references/governance.md`](references/governance.md)
-   and follow it: discover (constitution · every `applyTo`-matching `.github/instructions/*`, always
-   including `code-review-generic` · design artefacts for frontend surfaces · `security-and-owasp` on
-   any trust boundary), **distil to binding constraints**, **persist to
+   and follow it: discover (constitution · every `applyTo`-matching `.github/instructions/*`, matched
+   by listing the directory rather than from a remembered list · design artefacts for frontend
+   surfaces · `security-and-owasp` on any trust boundary), **distil to binding constraints**, **persist to
    `runs/<RUN_ID>.governance.md`**, then pin it with `track-note.sh governance <path>`.
 
    Three rules the reference expands and this body will not restate:
@@ -276,8 +277,9 @@ distinct reviewer, and `track-audit.sh` exist to catch.
 - ⚙️ **script** — a bundled hook/CLI: mechanical, deterministic, no LLM.
 
 "Governance" below means the full bundle from [`references/governance.md`](references/governance.md):
-constitution (hard gate) + every `applyTo`-matching `.github/instructions/*` (always
-`code-review-generic`) + `security-and-owasp` on trust boundaries, embedded as **content**.
+constitution (hard gate) + every `applyTo`-matching `.github/instructions/*` +
+`security-and-owasp` on trust boundaries, embedded as **content**. The review rubric
+(`code-review-generic`) is not in the bundle — the review step loads it separately.
 
 | Step | Fires | Kind |
 |------|-------|------|
@@ -313,14 +315,18 @@ Invariants this skill asserts; most are *realized by* SDD's loop, not re-run her
 - **Governance gate — hard, in every mode (incl. scaffold)**: every review applies the repo's standing
   governance on top of the quality rubric — the **project constitution** as a *hard* gate (a diff
   violating a stated principle fails review in every mode), plus every `applyTo`-matching
-  `.github/instructions/*` (always including `code-review-generic`, which supplies the baseline
-  rubric), applied to the diff even when the reviewer didn't author the file. The **same set is pushed
+  `.github/instructions/*`, applied to the diff even when the reviewer didn't author the file. The
+  baseline rubric comes from `code-review-generic.instructions.md`, loaded at this step rather than
+  carried in the bundle (see below). The **same governance set is pushed
   upstream into every maker brief**, so governance gates both ends and review is the backstop, not the
   first consultation. **No-ops only when those files genuinely don't exist**, never by omission —
   and `track-audit.sh` fails a run whose bundle omits an `applyTo`-matched file. Procedure:
   [`references/governance.md`](references/governance.md).
 - **Security review required** at stage 2 for trust-boundary changes: the `requesting-code-review`
   rubric is quality-only, so the reviewer must also apply `security-and-owasp.instructions.md`.
+- **The reviewer gets the rubric as content.** At the review step, read
+  `code-review-generic.instructions.md` and embed the relevant parts in the reviewer brief alongside
+  the governance bundle. It carries no `applyTo` — nothing auto-injects it, on either surface.
 - **Maker/checker required**: the stage-1/stage-2 reviewer must be a subagent distinct from the
   implementer (SDD's two-stage review).
 - **Resume from durable state, not memory**: an interrupted run reconciles from committed history +

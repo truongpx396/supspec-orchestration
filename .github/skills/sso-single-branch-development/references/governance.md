@@ -31,13 +31,32 @@ the *check* must happen, and its outcome must be stated. Never no-op by omission
 
 1. **Constitution** — `.specify/memory/constitution.md`. Extract the principles that bear on this
    task's surface. Absent → note it and continue.
-2. **Matched instructions** — list `.github/instructions/` and read every file whose `applyTo` glob
-   overlaps the paths this task batch will touch.
-   - **Always**: `code-review-generic.instructions.md` (`applyTo: '**'`) — the baseline rubric.
-   - By surface: `go.instructions.md` (`**/*.go`) · `reactjs.instructions.md` +
-     `state-management.instructions.md` (`**/*.tsx`, `**/*.ts`) · `python.instructions.md`
-     (`**/*.py`) · `devops-cicd.instructions.md` (Dockerfiles / Compose / CI) ·
-     `backing-services.instructions.md` (infra / backing-service config).
+2. **Matched instructions** — **list the directory, then match globs. Do not work from a remembered
+   list of filenames.** For every file in `.github/instructions/`, read its `applyTo` front-matter
+   glob and read the file if that glob overlaps the paths this task batch will touch.
+
+   ```bash
+   for f in .github/instructions/*.instructions.md; do
+     printf '%s\t%s\n' "$(basename "$f")" \
+       "$(sed -n 's/^applyTo:[[:space:]]*//p' "$f" | head -1)"
+   done
+   ```
+
+   This is deliberately mechanical: the set of instruction files is per-repo and changes over time,
+   and `track-audit.sh` check **G2** re-derives the matched set from the same `applyTo` globs. Any
+   file matched by G2 but absent from your bundle is a FAIL, so an enumeration you carry in your head
+   will eventually disagree with the gate. Two consequences worth knowing:
+   - A file with **no `applyTo`** is never auto-matched and G2 never requires it —
+     `code-review-generic.instructions.md` is deliberately in this category (see step 5).
+   - Two files are easy to miss because they are not language files, and both match on path/name
+     rather than extension:
+     - `agent-skills.instructions.md` (`**/skills/**/SKILL.md`) — **any task that authors or edits a
+       skill pulls it in.**
+     - `ai-agent-security.instructions.md` — matches agent/tool/MCP/prompt/RAG paths. Its glob is a
+       heuristic and agentic code hides under many names, so **if the diff wires an LLM to a
+       capability (tools, MCP, memory, retrieval, delegation), treat it as matched even when no glob
+       hit.** Note it applies to *this* repo's own skills and hooks, which are themselves an agentic
+       system.
 3. **Design context (frontend only)** — when the surface includes `**/*.tsx`, `**/*.ts`, `**/*.jsx`,
    `**/*.css` or any other frontend file, read the design artefacts if present (pass silently if
    absent, never fail): `.stitch/designs/<page>.html` for the page being built, and the
@@ -45,13 +64,19 @@ the *check* must happen, and its outcome must be stated. Never no-op by omission
    rather than diverging into a separate alignment pass.
 4. **Security** — for any cluster touching a trust boundary (auth, secrets, network, persistence,
    deploy config): `security-and-owasp.instructions.md`.
+5. **NOT here: the review rubric.** `code-review-generic.instructions.md` is a *reviewer* rubric, not
+   a maker constraint. It carries no `applyTo`, so it is not part of the matched set and does not go
+   in the bundle. It is loaded later, at the review step, and passed into the
+   `requesting-code-review` / stage-2 reviewer brief — see
+   [The review step reads its own rubric](#the-review-step-reads-its-own-rubric).
 
 ### Budget the read — distil, don't hoard
 
-The matched set is large: `security-and-owasp` alone is ~1,000 lines, and a Go+React+compose surface
-can match ~3,000 lines across seven files. Holding all of that raw in the main session for the whole
+The matched set is large: `security-and-owasp` alone is ~1,100 lines, and a Go+React+compose surface
+can match ~3,000 lines across several files. Holding all of that raw in the main session for the whole
 core is the single biggest context-pressure source in this pipeline, and it is exactly what
-compaction evicts.
+compaction evicts. (Scoping the review rubric out of the maker phase — step 5 — is part of the same
+budget: it is ~400 lines that only the reviewer needs.)
 
 So **read fully, then distil immediately**. What you carry forward is not the files — it is the set
 of *binding constraints that apply to this diff*, each one concrete enough to act on
@@ -83,9 +108,6 @@ Surface: backend-go/**, deploy/compose.yml
 - kernel/ must not import from internal/product/** (principle 3)
 - coverage floor 80% on new packages (principle 7)
 
-## code-review-generic.instructions.md — ALWAYS
-- <the specific rules that bite this diff>
-
 ## go.instructions.md — matched **/*.go
 - errors wrapped with %w, never %v
 - no naked returns in exported funcs
@@ -97,8 +119,8 @@ Surface: backend-go/**, deploy/compose.yml
 ## Design (.stitch/designs/…, design-system/…) — ABSENT (no frontend surface)
 
 ## Cluster → binding sections  (only when the core fans out to parallel makers)
-- go cluster (cmd/, kernel/, internal/, go.mod): Constitution I/II, code-review-generic, go
-- deploy cluster (compose.yml, Caddyfile, .env*): code-review-generic, devops-cicd, backing-services, security-and-owasp
+- go cluster (cmd/, kernel/, internal/, go.mod): Constitution I/II, go
+- deploy cluster (compose.yml, Caddyfile, .env*): devops-cicd, backing-services, security-and-owasp
 ```
 
 State **ABSENT** explicitly for every check that no-opped. An absent line is proof the check ran; a
@@ -140,6 +162,26 @@ If the context was compacted (or the session crashed and resumed) at any point d
 ~50-line read, it is authoritative, and it costs nothing next to shipping an ungoverned brief.
 `track-reconcile.sh`'s `resume_action` says this explicitly on every resume.
 
+## The review step reads its own rubric
+
+`code-review-generic.instructions.md` is loaded **at the review step, not at core entry**. When you
+dispatch `requesting-code-review` (or the stage-2 reviewer):
+
+1. Read `.github/instructions/code-review-generic.instructions.md` in the main session.
+2. Embed the parts that bear on this diff — review priorities, the comment format, the checklist
+   sections that apply — into the reviewer's brief, **as content**, exactly like the governance
+   bundle. The same "filenames transfer nothing" rule applies.
+3. Add the governance bundle alongside it. The reviewer needs both: the rubric tells it *how* to
+   review, the bundle tells it *what this project requires*.
+
+On precedence, so the reviewer does not have to guess: `security-and-owasp.instructions.md` wins on
+security, the matched language file wins on language specifics, and the rubric governs review process
+and output format.
+
+It stays out of the maker phase for two reasons: it restates the language files generically (~400
+lines of duplication in every brief), and a rubric for judging finished work is noise in an
+instruction to write it.
+
 ## Why it can't be delegated
 
 - **Not a subagent task.** Subagents have isolated context. "Read the instructions, then brief
@@ -154,10 +196,13 @@ If the context was compacted (or the session crashed and resumed) at any point d
 ## Checklist
 
 - [ ] Constitution read, or explicitly noted absent
-- [ ] `code-review-generic.instructions.md` read (always in scope)
-- [ ] Every `applyTo`-matching instruction file read
+- [ ] `.github/instructions/` **listed** and every `applyTo`-matching file read — matched by glob at
+      run time, not from a remembered list (includes `agent-skills.instructions.md` when the diff
+      touches a `SKILL.md`)
 - [ ] Design artefacts read for any frontend surface, or noted absent
 - [ ] `security-and-owasp.instructions.md` read for any trust-boundary surface
+- [ ] `code-review-generic.instructions.md` **not** in the bundle — it is loaded at the review step
+      and embedded in the reviewer brief instead
 - [ ] Constraints distilled and written to `runs/<RUN_ID>.governance.md`
 - [ ] `## Cluster → binding sections` map added when the core fans out to parallel makers
 - [ ] `track-note.sh governance <path>` called
