@@ -8,6 +8,35 @@ contracts are still stabilizing — matching the convention used by
 Each skill's `SKILL.md` frontmatter carries its own `version` field; this file tracks the
 whole-repo release that ships them together.
 
+## [0.7.0] - 2026-08-11
+
+### Governance gate now discovers task-scoped feature context, not just standing rules (`sso-single-branch-development` 0.4.1 → 0.5.0)
+
+The governance gate already guaranteed that the constitution, matched instructions, and security
+rules reached every maker and reviewer brief as content — but a SpecKit `spec.md`/`plan.md`/
+`research.md`/`data-model.md`/`contracts/`, when the repo has one, was never part of that guarantee.
+A maker briefed with only a task ID and a one-line title can produce code that compiles and passes
+review while solving the wrong requirement, and nothing in the pipeline caught it.
+
+- **New discovery item 6** in `references/governance.md`: when a SpecKit `specs/<slug>/` layout
+  exists, the task-relevant slice of `spec.md`/`plan.md`/`research.md`/`data-model.md`/`contracts/`
+  is discovered, distilled, and persisted into the same `runs/<RUN_ID>.governance.md` bundle
+  governance already uses. **Scoped to this run's task IDs / user-story tags — never the whole
+  feature** — a `spec.md` spanning five user stories only contributes the one bearing on the current
+  task; absent SpecKit is a valid no-op, same as an absent constitution.
+- **Reuses the existing brief-embedding and audit machinery for free — no new hooks.** The bundle is
+  still pinned via `track-note.sh governance`, still pushed as content (never a filename) into every
+  maker/reviewer brief across main-session and dispatched subagents alike, and still re-anchored
+  after a compaction. `track-brief.sh` and audit check `G6` already scan every bullet line in the
+  bundle regardless of section, so a brief that drops the feature-context slice fails exactly like
+  one that drops a governance constraint.
+- **New checklist item `A6b`** (`tests/prompt-level-checklist.md`, surfaced in `track-audit.sh`'s
+  printed NOT-CHECKED-HERE list) for the one thing no hook can verify: whether the *right* slice was
+  pulled for the task, not just that some content made the hop into the brief. The checklist's
+  human-only tally moves from 12 to 13; README's own account of it updated to match.
+- `SKILL.md`, `governance.md`, and README's governance callout document the new step end to end.
+  `SKILL.md` grew but stays within the repo's 500-line hard maximum (499 lines).
+
 ## [0.6.1] - 2026-08-09
 
 ### README/CHANGELOG drift after 0.6.0
@@ -395,6 +424,7 @@ Initial tagged release. Three composable skills plus their shared mechanical-hoo
   `scripts/install-hooks.sh` for both Copilot and Claude Code surfaces.
 - One-command repo bootstrap via `install.sh`.
 
+[0.7.0]: https://github.com/truongpx396/supspec-orchestration/releases/tag/v0.7.0
 [0.6.1]: https://github.com/truongpx396/supspec-orchestration/releases/tag/v0.6.1
 [0.6.0]: https://github.com/truongpx396/supspec-orchestration/releases/tag/v0.6.0
 [0.5.0]: https://github.com/truongpx396/supspec-orchestration/releases/tag/v0.5.0
