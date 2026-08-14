@@ -8,6 +8,97 @@ contracts are still stabilizing — matching the convention used by
 Each skill's `SKILL.md` frontmatter carries its own `version` field; this file tracks the
 whole-repo release that ships them together.
 
+## [0.9.0] - 2026-08-14
+
+`sso-single-branch-development` 0.6.0 → 0.7.0. Six bugs found and fixed in a single client PR that
+had already merged the 0.8.0 hooks bundle — three in `track-guard.sh` denying legitimate work, two
+found by auditing the run's own artifacts, and one in the CI gate that let a hand-fabricated PR body
+through as genuine. Every fix below was reproduced from the client's real transcript, then verified
+against a throwaway repo or (for the CI gate) by extracting and executing the workflow's actual `run:`
+scripts — never reasoned about from the diff alone. Suite: 355 → **379** SBD tests, 205
+parallel-tracks tests (unchanged, all passing).
+
+### Three guard false-positives that left the worker no in-bounds move (`sso-single-branch-development`)
+
+Follow-on from the same client scaffold run. All three are `track-guard.sh` denying something
+legitimate, and all three end the same way — the model reaches for a Bash heredoc to route around the
+guard, which the *harness's* own worktree-isolation check then refuses as "too complex to verify".
+Replayed against throwaway repos; suite 355 → **366** SBD assertions.
+
+- **First publish was denied whenever the hook fired from the main checkout.** `is_first_publish()`
+  read `HEAD` at the hook's CWD to decide which branch a push would publish. Under the skill's own
+  default isolation the work is in a sibling worktree while hooks fire from the main checkout, where
+  `HEAD` is `main` — so `git push -u origin feat/x` was classified as an attempt to publish the *base*
+  branch and denied. That made `gh pr create` unreachable and reproduced, exactly, the pressure the
+  carve-out was added to remove: the worker self-granted `TRACK_ALLOW_FF_PUSH`. The **refspec** is now
+  authoritative (`git push origin feat/x` names its own branch); `HEAD` is consulted only when no
+  refspec does. Redirects (`feat/x:main`), the base branch, branches with no local ref, bulk modes and
+  `--force` stay denied, and a second push of a published branch is still an update needing the opt-in.
+- **The destructive-infra guard matched heredoc *data* as if it were code.** `*truncate*` matched
+  anywhere in the command, so writing a PR body containing the word "truncated" was denied as an
+  "irreversible schema op" — uncompliable, since the only way to satisfy it was to not write the PR
+  body. Heredoc bodies are now stripped before scanning, and `truncate` needs the SQL spelling
+  (`TRUNCATE TABLE`) or a SQL client on the same line, so coreutils `truncate -s 0` passes. Code
+  *after* a heredoc is still code: `cat <<EOF … EOF; psql -c 'drop table t'` still denies.
+- **Writes outside every worktree got a denial that named no alternative.** Scope is repo-relative, so
+  a path in a scratch/temp dir can never match a prefix — but the message said "editing it would
+  become a merge conflict at integration", which is meaningless for `/tmp`. An agent staging
+  generated output in a scratch dir therefore had *every* `Write` denied with no stated remedy. The
+  denial now says the work belongs inside the worktree under an owned prefix, notes that anything
+  written outside the repo reaches neither the diff nor the evidence gate nor the PR, and points at
+  absolute-path prefixes for the rare genuine case.
+- **Test-harness integrity:** `mk_term()` built its JSON with `printf`, so any multi-line fixture
+  emitted raw control characters, the hook died in `jq -r`, and the assertion *passed* for the wrong
+  reason. It now builds with `jq`.
+
+### Two more found by auditing the same run's artifacts (`sso-single-branch-development`)
+
+- **`runs/` was governed as if it were a deliverable.** The skill requires the model to write the
+  governance bundle, the PR body and the run record into `RUNS_DIR` — gitignored bookkeeping that
+  never enters the reviewed diff — but the guard applied `TRACK_ALLOWED_PREFIXES` to it like any
+  other path. With `runs/` absent from the approved scope the model composed the bundle into
+  `backend-go/.gov.tmp2.md`, an in-scope **deliverable** path, and shell-`cp`'d it into place: the
+  guard pushed a bookkeeping file into the very tree it exists to protect. `RUNS_DIR` is now always
+  writable, resolved as an absolute path against the repo root (and the linked worktree), so a
+  `runs/` directory sitting under some other subtree cannot name itself into scope.
+- **A green that verified nothing was recorded as proof.** `go build ./...` on a module with no `.go`
+  files prints `matched no packages` and exits 0; graded on failure signals alone that is
+  indistinguishable from a full compile, and it is exactly how the observed run satisfied its
+  `go-build` evidence floor while building zero packages — the PR then reported 3/3 required kinds
+  passing. Captures matching a vacuity pattern (`TRACK_VACUOUS_PATTERN`, overridable) are now flagged
+  `vacuous: true` with `verdict_by: vacuous-pass:nothing-verified`. Deliberately **not** downgraded to
+  a failure: during a scaffold an empty build is the honest state of the world, and failing it invites
+  the "edit the deliverable to make the gate green" trap. Failure still outranks vacuity.
+
+### The CI gate accepted a hand-fabricated "Auto block" (`agent-pr-audit.yml`)
+
+Found while auditing the same client run's own open PR against a fresh render of its own
+`runs/*.json`. The PR's "auto block" was never produced by `track-report.sh` — the real script's
+literal opening comment is
+`<!-- BEGIN track-report auto block — machine-rendered, do not hand-edit -->`; the PR's version
+dropped everything after `block`. The whole **Run stats**, **Subagent lifecycle trace**, and
+**Compliance warnings** sections were absent, the full per-file table collapsed to one prose
+sentence, and the discipline-audit table (`### Discipline audit — mechanical invariants…`, real
+summary `**16 passed · 2 warning(s) · 0 failure(s)**`) was replaced by a paraphrase
+(`#### Discipline audit: 16 passed, 2 warnings, 0 failures`) — same numbers, invented shape. Verified
+directly: re-running `track-report.sh` against that run's own still-intact record reproduces the real
+block byte-for-byte different from what shipped.
+
+It passed CI anyway. `agent-pr-audit.yml`'s presence check only grepped for the END marker (public in
+the docs, easy to copy correctly) — never the BEGIN one. Its audit-format check had exactly one
+fallback for "no summary line found": a soft `::warning::` written for repos whose install predates
+`track-audit.sh`. A paraphrased summary landed in that same branch, indistinguishable from a
+legitimately old install, and the gate exited 0.
+
+Two independent checks now close this, verified behaviorally (the real `run:` scripts extracted from
+the YAML and executed against the actual fabricated body, a genuine render, and a true legacy body
+with no audit section at all — 375 → 379 SBD assertions, none of them log-scraped):
+- The presence check now requires the full BEGIN marker, not just the END one.
+- The audit-format check now distinguishes "no audit mention at all" (unchanged: soft warning, the
+  legitimate legacy-install case) from "an audit-shaped section that isn't the literal heading +
+  summary `track-report.sh` emits atomically from one `printf`" (new: hard failure) — including the
+  narrower case of the real heading present with the summary line stripped out from under it.
+
 ## [0.8.0] - 2026-08-14
 
 All four sections below ship in `sso-single-branch-development` 0.5.0 → 0.6.0 (the concurrency,
