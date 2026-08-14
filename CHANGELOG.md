@@ -8,6 +8,172 @@ contracts are still stabilizing — matching the convention used by
 Each skill's `SKILL.md` frontmatter carries its own `version` field; this file tracks the
 whole-repo release that ships them together.
 
+## [0.8.0] - 2026-08-14
+
+All four sections below ship in `sso-single-branch-development` 0.5.0 → 0.6.0 (the concurrency,
+scope-propagation, and cost/legibility fixes) and `sso-executing-parallel-tracks` 0.2.0 → 0.2.1 (the
+per-track config docs correction). Found and fixed across one real client scaffold run, replayed and
+verified in throwaway repos rather than reasoned about from the diff. Suite: 284 → **355** SBD tests,
+205 parallel-tracks tests (unchanged, all passing).
+
+### Four silent-failure bugs in the hooks bundle, all found in one client scaffold run (`sso-single-branch-development`)
+
+A real run in a client repo produced a PR whose own audit reported an empty evidence pack, missing
+phase stamps, and a governance bundle written twice — while the model reported the work as done.
+None of it was model misbehavior: four mechanical defects switched the bundle off without saying so,
+and every workaround visible in that run was the only in-bounds move left. Each fix below is bracketed
+by regression tests (suite: 284 → 335 assertions).
+
+- **The confirmed scope never reached the guard.** `--persist` stamped `TRACK_ALLOWED_PREFIXES` into
+  the breadcrumb — a *record* — and nothing else, while `track-guard.sh` reads the env files. Hooks
+  are spawned by the agent surface, so the `export` the docs told the model to make could never
+  arrive. Net effect: a human approved a writable scope at the start gate and the guard denied every
+  path in it for the whole run, with the only fix (`.github/hooks/`) itself outside the empty scope —
+  no compliant path left. `--persist` now writes the confirmed scope, frozen paths, toolchain and
+  evidence floor into the managed block alongside `RUN_ID`, read back out of the breadcrumb so a
+  resume recovers them without re-typing. An exported value still outranks the file, and a worker
+  carrying another run's id does not inherit this run's scope.
+- **Worktree isolation switched the recorders off.** The managed block asked "is `HEAD` *here* the
+  run's branch?", but Step 3 puts the work in a *sibling* worktree while the session — and every
+  hook's CWD — stays in the main checkout on the base branch. `RUN_ID` was therefore de-adopted for
+  every hook firing from there, and each recorder no-ops silently without it. The documented default
+  form of isolation disabled recording *and* the Stop-time evidence gate. Adoption now asks whether
+  the branch is checked out in **some worktree of this repo**. `track-audit.sh` had the same blind
+  spot with sharper teeth — `I1`/`I2` read HEAD in the audit's own CWD and so FAILED a correctly
+  isolated run (blocking, under `TRACK_AUDIT=1`) for doing the right thing; both now resolve the
+  run's branch to the worktree holding it, and still FAIL a run that genuinely never isolated.
+- **A ceiling trip disarmed the whole bundle for the rest of the session.** Any terminal `status`
+  retired the block, but `budget-exceeded`/`no-progress` are written *mid-session* by
+  `track-tokens.sh`/`track-meter.sh` — and everything that matters after one is the report-out:
+  the status stamp, the evidence capture, the handoff. Adoption now survives them (`success`/
+  `blocked`, the deliberate states, still retire), so a tripped run stays recorded and gated.
+  `track-meter.sh`'s halt becomes the counterweight: it fires **once**, at the crossing, matching
+  `track-tokens.sh`'s existing contract, because a cumulative count makes a repeating halt one that
+  never ends.
+- **The governance bundle split in two.** `RUNS_DIR` is anchored to the main checkout but the pinned
+  bundle path was CWD-relative, so a bundle written from a worktree landed in that worktree's own
+  gitignored `runs/` while the record pointing at it lived in the main checkout's — audit `G1` then
+  reported it MISSING, and the natural repair is to write it twice and let the copies drift.
+  `track-note.sh governance` now resolves and records an **absolute** path, retries a relative one
+  against the anchored `RUNS_DIR`, and warns when the bundle sits outside the run's records dir.
+  `track-audit.sh`/`track-reconcile.sh` retry legacy relative pins the same way; `track-compact.sh`
+  also matches a re-read by basename, so a relatively-typed `cat` still counts for `I4`.
+- **`.github/hooks/track-env.sh` is now actually gitignored** by `install-hooks.sh`. Every doc
+  called it the gitignored local layer; nothing ever ignored it. It holds `RUN_ID` and (as of this
+  release) the confirmed scope, so committing it ships one checkout's run state to everyone — and
+  while untracked-and-unignored its *content* is hashed into the evidence fingerprint
+  (`git ls-files --others --exclude-standard` → `git hash-object`), so under the branch-in-place
+  fallback a `--persist` rewrite silently staled every capture taken before it.
+- **`track-note.sh` no longer no-ops in silence.** It is a CLI the skill calls deliberately, and its
+  two mandatory subcommands are the resume anchors — so an unset `RUN_ID` now says so on stderr
+  (still exit 0) instead of letting the caller believe a phase stamp landed.
+- **Docs corrected where they taught the broken model:** `hooks.md`'s "re-root the workspace into the
+  worktree" advice (stale — everything single-homes on the main checkout via `git-common-dir`), its
+  "export the correct ones for the new task" triage row, `SKILL.md` Step 1 and the governance gate,
+  `references/governance.md`'s persist snippet, and `README`'s `RUN_ID` row.
+
+### Per-track ownership is now mechanically enforced in a parallel wave (`sso-single-branch-development` + `sso-executing-parallel-tracks`)
+
+The fix above single-homed every hook on the main checkout, which is right for a solo run but
+collapsed a layer a **wave** needs. `track-env.sh` was documented from the start as the
+"per-worktree LOCAL override" — the layer that gives N concurrent tracks N different writable
+scopes — and the bootstrap read the main checkout's copy unconditionally, so a worktree-local file
+was never read. That made the override dead.
+
+The deeper cause: Step 3 fans out with `dispatching-parallel-agents`, i.e. **in-session subagents**,
+so all N workers share one process environment and one CWD. The orchestrator's documented
+`export TRACK_ALLOWED_PREFIXES=... # inside each worker's launch` could not reach a hook under its
+own prescribed launch mechanism, and `track-precheck.sh` was asserting a disjoint ownership
+partition that the guard never actually enforced per worker — cross-track ownership was
+prompt-enforced.
+
+- **`track-guard.sh` now resolves scope per write target.** For each path it already computes the
+  worktree that path belongs to; it now prefers a `track-env.sh` found in *that* worktree, reading it
+  in a subshell with the scope vars unset (the file's `${VAR:-}` idioms are no-ops against an
+  already-set value, and an in-loop `source` would leak one path's override onto the next). Non-empty
+  `TRACK_ALLOWED_PREFIXES`/`TRACK_FROZEN_PATHS`/`TRACK_IMMUTABLE_PREFIXES` win for that path; a
+  worktree declaring nothing inherits the session's, so solo runs are unaffected. The deny message
+  names which worktree's file decided, so a wave failure is attributable. The tool call's target path
+  is the *only* signal that distinguishes in-session workers, which is why the guard can do this and
+  the recorders cannot.
+- **Orchestrator docs corrected to match what the mechanism can deliver.** Per-track config travels
+  in each track's worktree file (written after `git worktree add`, before fan-out), not in the
+  environment. A new **Known limit** states plainly that per-track `RUN_ID` does *not* reach the
+  recorders under in-session fan-out — a wave produces one run record, not N — and that launching
+  each worker as its own process is what would restore it. `RUN_ID` stays documented as per-track by
+  design, since `track-wave-preflight.sh` still derives `<wave-id>_<track-id>` and it works when
+  workers are separate processes.
+
+### Two features in two editor windows no longer corrupt each other (`sso-single-branch-development`)
+
+The everyday workflow — start a feature, leave it running, open a second VS Code window on the same
+repo, start another — silently cross-wired both runs. The managed block was a single slot, so the
+second `--persist` overwrote the first. Reproduced end to end: after starting run B, run A's own
+worktree resolved `RUN_ID=…_feat-b` and `SCOPE=src/b/`, so A's tool calls incremented B's record,
+A's evidence landed in B's pack, and A's guard **denied A's own approved files** while permitting
+B's. Nothing failed loudly; both runs simply became each other.
+
+- **The block is now a registry, not a slot**: one row per live run (`<run-id>|<branch>`), resolved
+  at source time to **the row whose branch is checked out where the hook is running**. That is the
+  only signal that separates two sessions sharing one process-independent config file.
+- **The single-run fallback is narrowed to the main checkout.** "No branch matched, exactly one run
+  on record" still adopts — that is the ordinary solo shape (session in the main checkout, work in a
+  sibling worktree). But inside a *linked worktree* the branch is exact, so a HEAD matching no row
+  now means no run owns this session. Caught by the tests: without this, once run B completed, B's
+  still-existing worktree adopted the lone surviving row and recorded the finished feature's tree
+  into run A.
+- **Ambiguity is refused, not guessed.** Two live runs plus a CWD on neither branch ⇒ adopt nothing.
+  A wrong guess does not fail; it mixes two runs' records and scopes.
+- **`--persist` warns once, when the ambiguity is created**, naming the fix (open each session on its
+  own worktree) — the one moment a human can act on it, rather than on every later tool call.
+- **`--complete` drops only the finishing run's row**, so a sibling run keeps recording. Dead rows
+  are pruned on every write. Legacy single-slot blocks are stripped on sight.
+- **`runs/` stays shared and is not moved into worktrees**: records are keyed by `RUN_ID`, so
+  concurrent runs never collide there, and one directory keeps every run visible to
+  `track-reconcile.sh` / `track-report.sh`.
+
+### Cost and legibility: pin versions up front, keep build noise out of context, say what each subagent was for
+
+Three changes aimed at the same run's other complaints — 1.44M tokens, eleven post-hoc deviations,
+and a PR body whose subagent trace said nothing.
+
+- **New RESOLVE step in scaffold mode** (`references/scaffold-mode.md`), between the mode guard and
+  GENERATE: probe and **pin** every version the batch will materialize, confirm the table with the
+  human, append it to the governance bundle under `## Resolved toolchain`, re-pin. No new machinery —
+  it then travels into every maker brief, `G1` re-hashes it, and a compacted session re-reads it.
+  The three deviation classes are named and routed: task-vs-governance conflicts resolve at the
+  governance gate (new `## Conflicts` bundle section, so the decision is made once instead of per
+  maker), task-vs-reality conflicts resolve by probing the installed tool (`--version`,
+  `config verify`, `npm view`) because no document can answer them, and registry drift resolves by
+  pinning the generator — `npm create vite@latest` is a build artifact too, and the bundle already
+  bans `:latest` for those.
+- **"Never edit the deliverable to make the gate green"** (convergence gate). A scaffold's empty
+  directories legitimately fail `go vet ./...`; the fix is to verify what exists
+  (`golangci-lint config verify`, `docker compose config`, `npm run build`), record the gap as
+  `n/a — no sources yet` evidence, and only then — if a guard genuinely belongs in the product —
+  write it to skip *loudly* or fail *loudly*, never to return 0 in silence, and report it as a
+  deviation.
+- **Capture the verdict, not the log.** `npm install`/`uv sync`/`docker compose up` emit thousands
+  of lines that prove nothing and re-enter context every turn. Redirect and tail; keep full output
+  for the commands that are the evidence. A real `tail -50` clears `E2`'s 40-character floor, so
+  this is a token decision and never an evidence one.
+- **`TRACK_MAX_TOKEN_ESTIMATE` default raised to 1,500,000** (was 200,000 seeded / 800,000 in the
+  template — the observed run measured 1,442,753). The old value tripped on essentially every
+  scaffold run.
+- **The PR body now says what each subagent was dispatched to do.** `track-trace.sh`'s `reason`
+  comes from `SubagentStart`'s `agent_description`, which some surfaces leave empty — leaving N
+  identical `SubagentStart general-purpose (a3c8254…)` rows. `track-brief.sh` sees the dispatch
+  tool's own `description` and `subagent_type` at `PreToolUse`, so it records them, and
+  `track-report.sh` renders a **Subagent dispatches** list showing each agent's purpose beside how
+  much of the governance bundle its brief actually carried. When neither source is available the
+  report says so, naming the wiring gap, rather than printing a bare trace.
+
+**Not fixed here, tracked separately:** `track-guard.sh` scopes `Write`/`Edit` but not Bash, so a
+heredoc or `cp` bypasses deny-by-default entirely; `install-hooks.sh` seeds an empty evidence
+catalog on exactly the repos scaffold mode targets (nothing to detect before the scaffold exists),
+with preflight's consistency check skipping silently when the catalog is empty; and per-track
+recording in a wave needs process-per-worker fan-out, a change to how waves launch.
+
 ## [0.7.0] - 2026-08-11
 
 ### Governance gate now discovers task-scoped feature context, not just standing rules (`sso-single-branch-development` 0.4.1 → 0.5.0)
