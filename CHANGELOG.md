@@ -8,6 +8,213 @@ contracts are still stabilizing — matching the convention used by
 Each skill's `SKILL.md` frontmatter carries its own `version` field; this file tracks the
 whole-repo release that ships them together.
 
+## [0.10.0] - 2026-08-15
+
+`sso-single-branch-development` 0.7.0 → 0.8.0. Six findings from one client scaffold run built on the
+0.9.0 bundle: three failures the run hit head-on, a token gauge that was reading a quarter of the
+spend while it happened, a context-discipline rule the skill never had, and one hole caught by
+reviewing this release's own first draft before it shipped. Suite: 379 → **424** SBD tests, 205
+parallel-tracks (unchanged, all passing).
+
+Every fix was reproduced against a throwaway repo with the real installed bundle **from a linked
+worktree** — the configuration these bugs need in order to appear at all — and the token findings were
+replayed from the client record's own numbers, byte-for-byte. Two suspicions were measured and then
+*not* acted on: `jq -s` over a 41MB transcript (0.27s, no latency problem) and a first-draft elision
+guard that turned out to deny this skill's own documentation.
+
+## Part 1 — three failures from the run itself
+
+### The governance bundle's `Write` hard-failed, with nothing written
+
+The bundle's home is `runs/`, which is gitignored — so it exists only where something created it: the
+main checkout, where preflight minted the breadcrumb, and **never** a freshly added linked worktree.
+The agent surface's `Write` tool does not reliably create missing parent directories, so the skill's
+own mandatory step died on a missing dir and the repair was a hand-rolled `mkdir` the skill never
+mentions. The second half is worse and quieter: re-deriving the path later in the run reliably
+produces a bare `runs/<id>.governance.md`, which from a worktree resolves to that worktree's *private*
+copy the main checkout cannot see — the audit then reports the bundle MISSING and the usual repair is
+to keep both and `cp` between them until they diverge. Both were visible in the client's record, which
+holds two pins with different shas and a `cp` between two directories.
+
+- **New `track-note.sh govpath`** prints the one correct absolute path and `mkdir -p`s the anchored
+  records dir before printing it. `references/governance.md` Step 2 and the SKILL body now route
+  through it instead of asking the model to compose the path, and the `governance` subcommand's
+  out-of-records-dir warning names it as the fix.
+
+### A documented governance probe was refused by the harness, not answered
+
+`references/governance.md` shipped its `applyTo` enumeration as a `for` loop over
+`.github/instructions/`. Under this skill's own default isolation that is unrunnable: a
+worktree-isolated session's Bash guard refuses any command it cannot statically prove stays inside the
+worktree, and answered that one with *"too complex to verify that it stays inside the worktree; break
+it into plain, separate commands."* A refused probe does not fail loudly — it pressures the run into
+working from a remembered list of instruction files, which is the exact failure the enumeration exists
+to prevent, and which `track-audit.sh`'s `G2` then fails the run for.
+
+- The step is now two **plain single commands** (`ls` + `grep -H '^applyTo:'`), with the rule stated
+  once for anything improvised alongside them, and a checklist line saying that a *refused* probe did
+  not run and must be re-issued rather than replaced with memory.
+
+### Scaffold mode skipped its fan-out entirely — and nothing could see it
+
+The client's run never invoked the dispatch tool at GENERATE. It ran `go mod init`, `uv init`,
+`npm create vite` itself, made the batch's live authorial decisions (which ruff rules, which
+LLM-as-judge dependencies) directly, and wrote `(real, controller-run)` into its own governance bundle
+as though that were sanctioned terminology. Its TODO list said *"fan out 5 disjoint-file cluster
+subagents"* the whole time. This is the anti-pattern the mode reference already named in bold — and
+naming it was all the enforcement there was, because a converged tree the controller authored looks
+byte-identical to one it applied.
+
+Three root causes, each addressed where it actually sat:
+
+- **A genuine ambiguity the skill never resolved.** A read-only subagent returns text, but `go.sum`,
+  `uv.lock` and `package-lock.json` carry hashes no model can author, and `tasks.md` says to commit
+  them "as generated, never hand-edited". With no rule to point at, the controller generalized
+  "lockfiles must come from the real tool" into "so I'll do all of it myself". `scaffold-mode.md` now
+  draws the line explicitly — **judgement is delegated, tool-determined output is not** — with a
+  table, and two named Bash-only controller steps: **BASELINE** (a pinned tree-generator, run inside
+  RESOLVE, whose output is *input* to the fan-out) and **MATERIALIZE** (the resolvers, run after
+  APPLY, over maker-authored manifests). "Only a tool can produce it" is stated as never a reason to
+  also *decide* it.
+- **The RESOLVE table read as an instruction to execute.** Its column header was `Generator (pinned)`
+  with `npm create vite@7.1.2` in the cell; the surrounding text says to *probe*. Renamed and made
+  explicit that RESOLVE decides versions and does not author files.
+- **The mode switch at the GENERATE boundary is not automatic.** The step immediately before it — the
+  governance gate — is explicitly non-delegable, and the controller carried "I do this myself"
+  straight through. GENERATE now opens with a reset callout and a stated precondition (*N briefs
+  dispatched, N sets of bodies returned*), and APPLY gains a rule against narrating a deviation into
+  the bundle as if it were policy.
+
+And it is now mechanical at both ends:
+
+- **`track-guard.sh` denies it live.** While a run's record says `phase.mode=="scaffold"` and `trace[]`
+  holds zero subagent dispatches, a `Write`/`Edit` to a **deliverable** path is denied, with a message
+  naming the fan-out. `RUNS_DIR` writes stay allowed (the bundle is controller work product by design)
+  and **Bash is untouched**, so pinned generators and resolvers work normally — the guard draws exactly
+  the line the reference draws. It **fails open** on every unknown: no `RUN_ID`, no run record, a
+  non-scaffold mode, or an unwired `track-trace.sh` (with no trace hook a compliant run has an empty
+  `trace[]` too). `TRACK_SCAFFOLD_FANOUT_GUARD=0` disables it.
+- **`track-audit.sh` gains `C2`**, promoted out of the MANUAL list: a scaffold run that produced a
+  deliverable diff with no generating dispatch is a **FAIL**. The half that genuinely cannot be
+  mechanized — whether *each* applied body came from its own maker — stays manual as `C2b`, reworded
+  so the split is explicit rather than implied.
+
+### RESOLVE now says which half of itself is delegable
+
+Raised by the same review: RESOLVE probes the environment and, when a pin is missing, installs a
+toolchain (`nvm install 22`, `uv python install`, a `GOTOOLCHAIN=auto` fetch). All of that output
+landed in the main session — on the client run, alongside governance, the largest avoidable context
+sink in a 1.68M-token estimate. `scaffold-mode.md` now splits the step in the pipeline diagram and the
+gate map, because the two halves have opposite rules and the boundary between them is the same
+momentum trap as the GENERATE one a step later:
+
+- **PROBE delegates.** Read-only, no judgement, bulk-noise-in / one-table-out — one subagent per
+  surface via `dispatching-parallel-agents`. Probes return the **command and its verbatim output**,
+  never a summarized version number, because a pin built on an assertion is the deviation RESOLVE
+  exists to prevent.
+- **PIN does not.** Which version wins when `plan.md` pins a Python patch that does not exist, what
+  each pin costs, the `## Conflicts` lines that travel into every brief — non-delegable for the same
+  reason the governance gate is.
+- **A probe never installs.** Installs mutate the developer's machine outside the repo and belong
+  *after* the human confirm, run by the controller. A probe that finds a version missing reports it
+  as a required action and stops. Two mechanical reasons, not just etiquette: shell activation does
+  not cross a process boundary (`nvm use 22` inside a subagent is inert for the caller — the binary
+  persists, the activation does not, so *whether later commands need the prefix* is itself a probe
+  finding to report), and an install taken before the confirm has front-run the gate authorizing it.
+
+**And the fan-out gate was tightened so this does not open a hole in it.** A probe dispatch is a real
+dispatch, so as first written both the guard and `C2` would have been satisfied by one — clearing the
+run out of the gate exactly one dispatch before GENERATE, the same skip one step later. Both now count
+only **generating** dispatches, using the `declared_na` flag `track-brief.sh` already records for a
+brief that declares `GOVERNANCE: n/a`, and fall back to `trace[]` when `briefs[]` is empty.
+
+## Part 2 — found while auditing that run's own numbers
+
+### The token ceiling was blind to 96% of the tokens
+
+A client run reported `input 418 · output 188,142 · cache_write 1,492,020 · cache_read 38,860,060`
+with `token_estimate: 1,680,580`. The arithmetic was right — that is exactly
+`input + cache_write + output`, the documented formula. The formula was wrong. `cache_read` was
+excluded on the stated reasoning that *"re-reading an already-cached context is the cheap part, and
+counting it makes the figure grow with run length rather than with work actually done"* — which is
+backwards for a runaway-run detector, since **growing with run length is the signal it exists to
+catch**, and cheap-per-token is not cheap at 38.9M of them. Weighted by the published Claude price
+ratios the real spend was ~**6,692,159** input-token-equivalents: `cache_read` alone was 95.9% of
+tokens processed and ~58% of cost. The gauge read 25% of the bill and ignored the unbounded part, so a
+ceiling tuned on it cannot fire until a long run is several times over budget.
+
+- **`token_estimate` is now cost-weighted**: `input×1 + cache_write×1.25 + cache_read×0.1 + output×5`,
+  in input-token-equivalents. Weights are env-tunable (`TRACK_TOKEN_W_CACHE_READ` / `_CACHE_WRITE` /
+  `_OUTPUT`) and read as strings coerced in `jq`, so a typo'd override falls back to its default
+  rather than aborting the Stop hook — an aborted hook writes no estimate, which silently disables the
+  ceiling. Setting them to `0`/`1`/`1` restores the old flat formula exactly, for a repo mid-project
+  with a ceiling calibrated against it.
+- **Seeded ceiling raised `1500000` → `6000000`** to match the ~4× change in what the number means.
+  Existing installs keep their own value; the template comment says to re-tune.
+- **`token_ceiling` is now recorded** beside the estimate. The client record showed a high estimate
+  and no `budget-exceeded` status, and nothing in the artifact could say whether the run was under
+  budget or the ceiling had been raised — exactly the question the record exists to answer.
+- **`token_estimate_chars` is `null`, not `0`, on the usage path.** A literal `0` is the signature of
+  the transcript parser matching nothing — a real failure mode this hook warns about, which silently
+  disables the ceiling — and the record must not conflate the two.
+- Not changed after measuring: `jq -s` slurping the transcript was suspected as a Stop-hook latency
+  risk and benchmarked at **0.27s on a 41MB transcript**. Left alone.
+
+### Context discipline is now a standing rule, not three asides
+
+Raised by review of the same run: nothing in the skill told an agent how to use tools economically.
+What existed was *"budget the read"* (governance gate only), *"keep build noise out of the context"*
+(one step of scaffold mode), and the token ceiling — which fires at `Stop`, i.e. after the tokens are
+spent. **Story and refactor mode, the two longest-running cores, said nothing at all**, despite being
+where per-increment test output re-enters context N times.
+
+New [`references/context-budget.md`](.github/skills/sso-single-branch-development/references/context-budget.md),
+reachable from every core and the governance gate:
+
+- **Why it is a correctness control, not thrift.** Context pressure is what triggers the compaction
+  that drops the governance bundle and starts the silent degradation `I4` exists to catch. And a token
+  held in context is paid repeatedly, not once — the same client run read **38.9M cached tokens
+  against 1.5M written**, i.e. every token placed in that context was re-read about **26 times**. That
+  multiplier is what turns "paste the whole file" into a number.
+- **A per-tool table**: `Grep` before `Read`, `offset`/`limit` over whole files, `files_with_matches`
+  before content, redirect installs/builds and read only the verdict, ask narrow git questions.
+- **The `RETURN:` contract.** Delegation is the skill's biggest context lever and the saving is in the
+  *return*, not the dispatch — a maker that wraps its file bodies in 2,000 lines of narration costs
+  more than writing them inline. Every brief now states what comes back, in one line. `G6` checks what
+  went **out** in a brief; nothing checks what comes **back**, and that is now said explicitly rather
+  than left as an assumption.
+- **The exception that is never traded**: full output stays for anything that *is* evidence. `npm
+  install` is setup and gets redirected; `npm run build` is the artifact and gets kept. Truncating to
+  save tokens is how `E2`'s 40-char floor gets satisfied by a string that proves nothing.
+
+### …and the hole the first draft of that left
+
+Caught on review of the change itself, before it shipped. The first `RETURN:` contract read *"the file
+bodies only. No commentary, no rationale, no summary of what you did."* Two defects, and the second is
+a correctness bug rather than a style one:
+
+- **"No commentary" silences a blocker.** A maker that finds a pin that does not exist, or a
+  constraint it cannot satisfy, had just been told not to mention it. The contract now opens with a
+  bounded `NOTES` slot (max 5 bullets, `"NOTES: none"` when there are none) so brevity cannot suppress
+  the one thing the controller most needs to hear.
+- **Nothing forbade eliding the bodies.** "Bodies only" plus a brevity framing is the single most
+  reliable way to produce `// ... rest of file unchanged ...` — and the controller **applies a returned
+  body verbatim**, so that writes a truncated file which still parses, still diffs cleanly, and reads
+  as complete to a reviewer. A token-saving instruction had been placed directly upstream of an unread
+  verbatim write. The contract now states that it bounds **packaging, never content**: bodies come back
+  COMPLETE and VERBATIM, and the fix for a long file is a narrower cluster, never a shorter body.
+
+Enforced, not just written down — `track-guard.sh` denies a `Write`/`Edit` whose new content carries an
+elision marker, since the controller cannot spot one by eye in 400 lines it did not author.
+**Deliberately narrow, five conditions**: the line must be short (≤72 chars), carry no quote or
+backtick, open as a comment or bracketed/leading-dots placeholder, contain an ellipsis, *and* name the
+elision in words. Short-and-unquoted is what separates a marker from a line *about* markers — an
+earlier form of the check denied writing this skill's own `context-budget.md` and `track-guard.sh`,
+both of which quote elisions in prose, and that regression is now pinned by a test that writes those
+files through the guard. Python's `Ellipsis`, a YAML document end, `{...x}`, `func f(n ...int)`, a
+markdown bullet mentioning elision, and `// wait for it... then retry` all pass. `TRACK_ALLOW_ELISION=1`
+opts out. 16 assertions cover both directions.
+
 ## [0.9.0] - 2026-08-14
 
 `sso-single-branch-development` 0.6.0 → 0.7.0. Six bugs found and fixed in a single client PR that
