@@ -8,6 +8,210 @@ contracts are still stabilizing — matching the convention used by
 Each skill's `SKILL.md` frontmatter carries its own `version` field; this file tracks the
 whole-repo release that ships them together.
 
+## [0.12.0] - 2026-08-16
+
+`sso-single-branch-development` 0.9.0 → 0.10.0. Nine findings from auditing one client scaffold run
+(`nexus-agent` Phase 1, T001-T009) against its own artifacts: the run record, the governance bundle,
+the env preset, the PR body, and the CI failure that gate produced. The run reported
+`status: success` with an 18-passed / 1-warning / 0-failure audit. Most of what follows is machinery
+that **passed while not checking what it claimed** — a signal recorded with no reader, or a match on
+a mention rather than an execution. Suite: 426 → **481** SBD tests, 205 parallel-tracks (unchanged,
+all passing).
+
+### The dispatch-hook matcher was `Task`; this surface's tool is `Agent`
+
+`templates/claude-settings.json` registered `track-brief.sh` on `"matcher": "Task"`, so on the
+current surface the hook was **never invoked** — the client's run record has no `briefs` key at all.
+`track-brief.sh`'s own tool test already accepted `agent|*subagent*|*dispatch*`; only the template
+was narrower than the script it wires. A stale matcher fails silently by construction: no artifact,
+no error, and every check reading that artifact degrades to "unwired" rather than failing.
+
+- **`"matcher": "Task|Agent"`**, and `install-hooks.sh --apply` now **re-syncs a stale matcher in
+  place** — keyed on the script rather than the whole block, so an existing install is repaired
+  instead of gaining a second entry that fires the hook twice. Entries pointing at anything else are
+  untouched. A structural test asserts the template is never narrower than the script again.
+- The cascade this was quietly costing: `G6` (the only check that observes the brief hop) degraded
+  to WARN; `I4`'s post-compaction half went inert; and the **scaffold fan-out guard fell back to the
+  weaker `trace[]` signal**, whose own comment says counting a RESOLVE probe "would hand the run a
+  free pass out of this gate before GENERATE". The client run dispatched three ≤50s probes during
+  RESOLVE — exactly that shape — and its PR body explained the missing briefs as an environment
+  limitation.
+
+### The PR's machine-rendered block was re-typed, and only CI caught it
+
+The auto block says *machine-rendered, do not hand-edit* and nothing enforced it. On the client PR
+the BEGIN/END markers were intact and everything between them had been re-written: the summary
+singularised (`1 warning · 0 failures` for `1 warning(s) · 0 failure(s)`), the findings table cut
+from four columns to three (dropping "How to clear it"), the "not a clean bill of health" caveat
+paraphrased, the `<details>` list of un-checked invariants deleted, and the audit's one WARN replaced
+with a paragraph asserting compliance no artifact showed. CI failed the PR — after it existed, and
+only because the summary's wording happened to differ.
+
+- **The END marker now carries a sha of the block it closes**, and `track-report.sh --verify-body
+  <file>` recomputes it (0 verified · 3 tampered · 4 no block / no sha). "Was this rendered or
+  re-typed" stops being a question about wording.
+- **`track-guard.sh` denies `gh pr create`/`gh pr edit`** when the body's block no longer matches its
+  own sha, naming the fix — re-render, and put your narrative *below* the END marker. A body with no
+  auto block at all is never denied; plenty of PRs are legitimately hand-written.
+- **`agent-pr-audit.yml`** verifies the sha too, and its END-marker test became a prefix match — as
+  an exact literal it would have failed **every** new render with "No track-report Auto block". A new
+  end-to-end test feeds a live `track-report.sh` render to the live CI step so that class of drift
+  cannot recur. Two of the workflow's own comments were also wrong: heading and summary do not come
+  from "the SAME printf", and the error text asserted a tampering mode ("the summary was removed")
+  that was not what happened.
+
+### `vacuous:true` was written by one script and read by none
+
+The flag exists because `go build ./...` on a module with no sources exits 0 having compiled nothing.
+The client's **final** `go-build` capture — at the fingerprint everything converged on — carried it,
+and the Stop gate passed it, the audit ignored it, and the PR printed `go-build | go build ./... |
+✅ pass`. That is verbatim the outcome the flag was introduced to end.
+
+- **The Stop gate treats an undeclared vacuous capture as unproven** and blocks with the remediation.
+- **New `track-note.sh evidence-na <kind> "<why>"`** clears it — the same shape as an `ABSENT` line
+  or `GOVERNANCE: n/a`: an explicit declaration, never silence. A reason is required. Not a hard
+  failure, because on a scaffold there is sometimes genuinely nothing to build yet; it is a failure
+  to have said so.
+- **New audit check `E4`** — FAIL undeclared, WARN declared, PASS clean. **`track-report.sh`** renders
+  `⚠️ passed, verified nothing` instead of `✅ pass`.
+
+### An evidence kind matched any command that merely *named* its tool
+
+The sanitiser strips mentions shaped like **data** (heredoc bodies, quoted literals). It had nothing
+to say about mentions shaped like **acquisition**, which match a tool-name pattern just as well.
+Seven of the client run's captures were this, every one recorded `pass`: `which golangci-lint`,
+`golangci-lint version`, `cd …/golangci-lint-2.12.2` (the tarball), `brew install actionlint` ×2,
+`cat /tmp/actionlint.log`, and one tagged `actionlint …` whose captured output was
+`track-reconcile.sh`'s JSON. The PR's own evidence table reads
+`| ci-lint | brew install actionlint + cat actionlint.log | ✅ pass |` — and `.github/workflows/*`
+makes `ci-lint` mandatory.
+
+- **`track-evidence.sh` classifies each command SEGMENT** (split on `; | && || &`, with redirection
+  ampersands protected) that names the kind's tool: NON-VERIFYING (a fetch/locate/read, or a bare
+  version probe), NEUTRAL (a `VAR=value` assignment — evidence of nothing either way), or VERIFYING.
+  One VERIFYING segment is enough, so `go test > log 2>&1; cat log` still counts. When every
+  tool-naming segment is non-verifying the capture is **not recorded at all** — the same exit the
+  heredoc/quote sanitiser takes, and for the same reason. Recording it as vacuous would be worse:
+  the gate reads the latest capture per kind, so a later `cat /tmp/x.log` would displace the real
+  run that wrote it. Dropped, the real capture stands; with no real capture the gate says the kind
+  is MISSING, which is truer and clearer. Tunable via `TRACK_NONVERIFYING_PATTERN`.
+- The **display line** now prefers a verifying segment and resolves through a variable assignment:
+  the client PR listed `GCL=/…/golangci-lint` — a bare assignment — as the command proving the Go
+  lint passed, because the real invocation (`$GCL config verify`) never spells the tool's name.
+
+### `E2` was measuring the JSON envelope, not the output
+
+`.response` stores `tool_response` as the surface returned it, and on this surface that is a
+serialized object: `{"stdout":"exit: 0","stderr":"","interrupted":false,…}` is ~110 characters of
+punctuation around 7 characters of proof. The 40-char floor was unreachable, so the check has been
+inert here — the client's `cat /tmp/actionlint.log` capture, whose entire evidence was `exit: 0`,
+cleared it. E2 now unwraps to stdout+stderr when the response parses as JSON.
+
+It also reports **unattested greens**. PostToolUse carries no exit code on this surface, so a `pass`
+means "printed no failure marker" — which an empty string also satisfies. `track-evidence.sh` records
+`attested:false` when neither an exit code nor an `exit: N` marker is present, and E2 names the count.
+
+### A lowercase failure read as a pass
+
+`fail_re`'s `\bERROR\b` is case-sensitive. `docker compose config` exiting 1 with `error while
+interpolating services.postgres.environment.POSTGRES_PASSWORD: required variable … is missing` was
+graded **pass / no-failure-signal**; the identical failure 30 seconds later graded `fail` only
+because that block happened to `echo "exit: $?"`. The default now includes punctuated lowercase forms
+(`error:`, `error while`, `command not found`, `No such file or directory`, `can't load config`) —
+deliberately not a bare case-insensitive `error`, which would fail every capture printing "0 errors".
+
+### `P2` checked set membership on a check named "gate sequence"
+
+The client's `phase_log` reads apply + materialize (13:33), review + convergence (13:43), then
+**generate** (13:44:46) — four minutes after its last subagent had stopped — then review +
+convergence again. Every canonical word appears, so P2 passed a log whose own order says the tree was
+applied and reviewed before GENERATE was entered. P2 now compares first occurrences and names the
+inverted pair.
+
+### The governance bundle forked into a worktree copy again
+
+`governance_reads[]` holds two `cp <worktree>/runs/<id>.governance.md <main>/runs/…` calls — the hand
+repair for a fork that had already happened — and the bundle was pinned three times at three
+different shas. v0.10.0 added `govpath` to print the one correct path; nothing **denied** the wrong
+one, which is what made it advisory.
+
+- **The guard denies writing a `*.governance.md` anywhere but the anchored records dir**, naming
+  `govpath` as the in-bounds move. Every other bookkeeping file in a worktree `runs/` is unaffected.
+- **`governance_reads[]` no longer counts moving or pinning the bundle as reading it.** `cp`, `mv`
+  and `track-note.sh governance <path>` all name the file, and `I4` was reading them as proof the
+  bundle had been re-anchored into context after a compaction. Nothing was read. Same rule the
+  evidence recorder now applies to `brew install <tool>`: naming a thing is not using it.
+
+### The evidence table dumped every capture ever taken
+
+31 rows for 7 kinds across 5 fingerprints, six of them ❌ — and all six were stale intermediate
+states a later capture of the same kind had already fixed. Nothing in the table said so, so the
+run's author wrote a paragraph underneath explaining which failures didn't count: hand-authored
+prose doing a renderer's job, inside the block that is supposed to be the un-authored half of the
+PR — and which the sha above now freezes, so that repair is no longer available.
+
+- **The table is now the latest capture per kind** — the rows the Stop gate and `E1` actually read —
+  and says so. Earlier captures collapse into a `<details>` labelled *superseded by a later run of
+  the same kind*. Nothing is deleted: a superseded ❌ is one click away and still reads ❌.
+- **A latest capture at an older fingerprint is marked `⏱ stale` in its own row**, instead of leaving
+  a reviewer to compare twelve hex characters by eye. A converged run shows no markers at all.
+- What no artifact can distinguish is a ❌ that was *deliberate* — a negative test whose command must
+  fail, like `docker compose config` with the required variable withheld. The collapsed section says
+  so and points that claim where it belongs: the author's own section, below the auto block.
+
+### Minor
+
+- **`track-deps.sh`** reported `{"present":false,"version":null,"in_range":true}` for an absent
+  optional tool — a range verdict for a version never observed, in the one file whose job is proving
+  versions. Absent now reports `in_range: null`.
+- README's audit table gains `E4`, its evidence env table gains `TRACK_NONVERIFYING_PATTERN` /
+  `TRACK_VACUOUS_PATTERN` / `TRACK_FAIL_PATTERN`, and its test count moves 426 → 481.
+
+## [0.11.0] - 2026-08-16
+
+`sso-single-branch-development` 0.8.0 → 0.9.0. One tuning change, in two halves: the governance
+bundle's context budget and the floor the audit holds it to. Suite: 424 → **426** SBD tests, 205
+parallel-tracks (unchanged, all passing).
+
+### The bundle budget was starving the briefs it exists to fill
+
+`references/governance.md` told the gate to distil the constitution, every `applyTo`-matched
+instruction file, the design artefacts, and the task's SpecKit slice down to **"typically 30–60 lines
+total."** That number was set to fight context pressure, and it fought the wrong thing: at 30–60 lines
+a ~1,100-line `security-and-owasp` plus two language files plus a scoped `spec.md`/`plan.md`/
+`contracts/` slice cannot be *compressed*, only **sampled**. What the briefs then carried was a theme
+summary — "wrap errors", "follow secure defaults" — and a maker cannot satisfy a theme. The bundle on
+disk still looked like proof the gate had run.
+
+- **Budget raised to up to ~500 lines for the whole bundle**, stated as a ceiling rather than a
+  target, with an explicit rule that nothing binding gets dropped to fit and nothing gets transcribed
+  wholesale to fill it. A per-section shape table makes the number legible (constitution 10–30, each
+  matched instruction file 20–60, `security-and-owasp` 30–80, design 10–40, feature context 30–120,
+  conflicts + cluster map 10–30).
+- **Why the higher ceiling doesn't inflate briefs**, now said where it matters: the bundle is the main
+  session's durable record, while each fan-out brief embeds only the sections its cluster's row names
+  in `## Cluster → binding sections`. Detail lands once and is routed per cluster — the alternative
+  the old budget was implicitly guarding against (one flat paste into N briefs) is already forbidden
+  by Step 3.
+- **A bundle that honestly overruns ~500 lines is a batch-scope signal**, not a trimming exercise:
+  split the batch or narrow the SpecKit slice to the task's own story, then re-distil.
+- **The Bundle-format example was itself at the old floor** — two bullets per section — so the
+  template the gate hands the model contradicted the instruction above it. Every section now carries
+  a realistic set, labelled as a floor rather than a size limit.
+- Step 4's re-anchor line no longer calls the bundle "a ~50-line read".
+
+### `TRACK_GOV_MIN_BULLETS` default 2 → 5
+
+`G5` exists because `G2` is a substring test a bare heading satisfies. Two bullets cleared `G5` while
+being exactly the theme summary above — raising the bundle ceiling without raising this floor would
+have left the cheapest passing bundle unchanged. The floor is still repo-policy: set
+`TRACK_GOV_MIN_BULLETS=2` to restore the old behaviour. `G5`'s fix hint now names the count and the
+budget, so the remediation is "add what binds this diff", not "pad the section".
+
+Tests pin both directions and the knob itself: a two-bullet section (the old passing shape) now
+FAILs, a five-bullet section passes, and `TRACK_GOV_MIN_BULLETS=2` still passes the two-bullet one.
+README's coverage paragraph also corrects a test count that had drifted since 0.9.0 (379 → 426).
+
 ## [0.10.0] - 2026-08-15
 
 `sso-single-branch-development` 0.7.0 → 0.8.0. Six findings from one client scaffold run built on the
