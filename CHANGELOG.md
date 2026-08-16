@@ -8,6 +8,63 @@ contracts are still stabilizing — matching the convention used by
 Each skill's `SKILL.md` frontmatter carries its own `version` field; this file tracks the
 whole-repo release that ships them together.
 
+## [0.12.1] - 2026-08-16
+
+`sso-single-branch-development` 0.10.0 → 0.10.1. One finding from a client run (`nexus-agent`
+Phase 2, T010-T026) that stalled at the governance gate and never wrote its bundle, plus a
+path-resolution bug found while fixing it. Suite: 481 → **493** SBD tests, 205 parallel-tracks
+(unchanged, all passing).
+
+### The governance gate had no legal path on a worktree-confined surface
+
+v0.12.0 made `govpath` load-bearing by **denying** a `*.governance.md` written anywhere but the
+anchored (main-checkout) records dir — the fix for a bundle that had forked into two copies pinned
+at three shas. Correct in itself, and it assumed the model can write to the main checkout. An agent
+surface that isolates via a **native worktree tool** confines its file-writing tools to the
+worktree, so the anchored Write is refused before any hook sees it. The two rules intersect at the
+empty set: **no path existed that the model was allowed to write.**
+
+The run found that out one refusal at a time — anchored path (surface), scratch dir outside the repo
+(guard), dotfile at the worktree root (guard: outside `allowed_prefixes`, which was `backend-go/`),
+a chained Bash lookup + `cp` (surface: "too complex to verify") — then hand-`cp`'d the file across
+and never called `track-note.sh governance` at all, so `G1` failed at the Stop gate on a bundle that
+was physically on disk. Four walls, a budget spent, and no bundle pinned.
+
+- **`track-note.sh govpath --staged`** prints a path inside the **current** worktree
+  (`<worktree>/runs/<RUN_ID>.governance.staged.md`) and creates the dir. The staged basename is
+  deliberately distinct from the bundle's, so it can never be mistaken for the pinned artifact.
+- **`track-note.sh governance <staged path>` promotes, then pins.** It copies the staged file into
+  the anchored records dir, **deletes the staged copy**, and records the anchored path — so the
+  one-home invariant becomes a property of the mechanism instead of the model's care, and the `cp`
+  loop that forked the earlier run's bundle has no reason to exist. Promotion is narrow (only this
+  run's own bundle basenames move) and fail-soft (a promotion that cannot happen still pins).
+- **The guard allows a staged bundle in a records dir and denies it anywhere else**, naming
+  `govpath --staged`; the anchored denial now names it too. A deny that states a rule but no legal
+  move is what turns one wall into four.
+- The underlying asymmetry, now stated in `references/hooks.md`: everything else single-homed on the
+  main checkout is written **by a script**, and scripts are not sandboxed — which is why the run
+  record, the trace and the evidence captures already worked from a linked worktree. The bundle was
+  the exception because the *model* writes it. Promotion-at-pin puts that cross-boundary write back
+  in a script, where the rest of the bundle already had it.
+- Documented at both places the model reads at the gate (`SKILL.md` Step 4 and
+  `references/governance.md` Step 2) and in the `G1` remediation line, so the route is found by
+  reading rather than by exhausting refusals. A structural test asserts it stays documented.
+
+### The governance pin was resolved logically, so a symlinked checkout compared unequal to itself
+
+Found while testing the promotion above, and live since the pin became absolute. `track-note.sh
+governance` resolved the caller's path with `pwd` (logical) while everything it is compared against —
+`RUNS_DIR`, and whatever `git rev-parse` hands the hooks — is physical. On any checkout reached
+through a symlink (`/tmp` and `/var/folders` on macOS; a symlinked worktree root anywhere) a
+correctly-placed bundle reported *"outside this run's records dir"*, and the new promotion would
+have tried to copy the file onto itself.
+
+- **Resolution is now physical (`pwd -P`), and applied after the `$RUNS_DIR/<basename>` fallback
+  rather than inside one branch of it** — the fallback returned whatever `RUNS_DIR` held, which is
+  exactly the logical form that compares unequal.
+- The pin is consequently recorded in resolved form, so its test asserts the recorded path *is* the
+  bundle (`-ef`) rather than string-matching the caller's spelling.
+
 ## [0.12.0] - 2026-08-16
 
 `sso-single-branch-development` 0.9.0 → 0.10.0. Nine findings from auditing one client scaffold run

@@ -1,6 +1,6 @@
 ---
 name: sso-single-branch-development
-version: 0.10.0
+version: 0.10.1
 description: 'Run a full end-to-end implementation pipeline on one branch/worktree in one of three execution cores — scaffold (non-behavioral bootstrap batch), story (TDD for new/changed behavior), or refactor (behavior-preserving keep-green) — with two-stage spec-compliance + code-quality verification, evidence capture, optional Copilot hooks, and draft-PR handoff. Use when asked to implement one feature, fix one bug, refactor existing code, or do foundation/scaffold setup with strong quality gates but without multi-track parallel orchestration.'
 ---
 
@@ -175,26 +175,26 @@ subagent vs ⚙️ script).
    research/data-model/contracts slice, when present), **distil to binding constraints**, **persist to
    the path `track-note.sh govpath` prints** — it `mkdir -p`s the anchored records dir (a bare `runs/`
    from a worktree is a private copy) — then pin it with `track-note.sh governance <path>`.
+   **If your surface refuses that write** because it confines file writes to the worktree (isolation
+   via a native worktree tool), don't improvise a scratch path or a hand-`cp`: write to
+   `track-note.sh govpath --staged` and pin *that* — the pin promotes it into the anchored dir and
+   deletes the staged copy. Both refusals are hard walls; this is the only path between them.
 
-   Three rules the reference expands and this body will not restate:
-   - **Persist it, don't just hold it.** The bundle lives in a file because this core spans many
-     dispatches and the session *will* be compacted — and raw pasted file content is the first thing
-     compaction drops. A model that "already read the instructions" but no longer holds them briefs
-     subagents with filenames, which is the defect below.
+   Four rules the reference expands and this body will not restate:
+   - **Persist it, don't just hold it.** This core spans many dispatches and the session *will* be
+     compacted — raw pasted file content is the first thing compaction drops. A model that "already
+     read the instructions" but no longer holds them briefs subagents with filenames: the defect below.
    - **Content, not filenames, into every brief** — `dispatching-parallel-agents` fan-out makers and
      `subagent-driven-development` per-task makers/reviewers alike. A brief naming
-     `go.instructions.md` gives an isolated-context subagent nothing to act on. **This is now
-     audited, not trusted:** `track-brief.sh` reads each outgoing brief at dispatch time and
-     `track-audit.sh`'s `G6` **fails** a dispatch whose brief carried none of the bundle's
-     constraints. A dispatch that genuinely needs none (read-only research) declares it in the
-     brief: `GOVERNANCE: n/a — <why>`.
-   - **Widened the surface mid-core? Re-distil and re-pin.** Calling `track-note.sh governance`
-     again is the sanctioned move — the stamp history is append-only, so `G3` asks whether every
-     dispatch had a pin before it rather than penalizing the second pin. Editing the bundle without
-     re-pinning is what WARNs.
-   - **Governance is a *maker* obligation, not just a checker backstop.** Both ends is deliberate
-     defense-in-depth: the brief prevents the violation, the review catches the remainder.
-     **No-ops only when the files genuinely don't exist**, never by omission.
+     `go.instructions.md` gives an isolated-context subagent nothing to act on. **Audited, not
+     trusted:** `track-brief.sh` reads each outgoing brief at dispatch time and `track-audit.sh`'s
+     `G6` **fails** a dispatch whose brief carried none of the bundle's constraints. One that
+     genuinely needs none (read-only research) declares it: `GOVERNANCE: n/a — <why>`.
+   - **Widened the surface mid-core? Re-distil and re-pin.** Calling `track-note.sh governance` again
+     is the sanctioned move — the stamp history is append-only, so `G3` asks whether every dispatch
+     had a pin before it, not who pinned twice. Editing the bundle without re-pinning is what WARNs.
+   - **Governance is a *maker* obligation, not just a checker backstop** — the brief prevents the
+     violation, the review catches the remainder. **No-ops only when files genuinely don't exist.**
 
    *Annotations via [`scripts/track-note.sh`](scripts/track-note.sh) — all self-reported
    (`self_reported:true`), never hook-observed:* `phase <mode> <step>` at every core-step boundary and

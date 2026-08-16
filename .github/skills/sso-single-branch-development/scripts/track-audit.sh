@@ -145,7 +145,7 @@ SUBAGENT_SEL='select(((.kind // "") == "subagent")
 # what would clear it — a finding with no next step just becomes noise everyone scrolls past.
 remediation_for() {
   case "$1" in
-    G1) printf 'Run governance discovery (references/governance.md), write the distilled bundle to <RUNS_DIR>/<RUN_ID>.governance.md (the anchored records dir preflight prints, NOT a bare runs/ — from a linked worktree that is a private, gitignored copy the main checkout cannot see), then: track-note.sh governance <path>' ;;
+    G1) printf 'Run governance discovery (references/governance.md), write the distilled bundle to <RUNS_DIR>/<RUN_ID>.governance.md (the anchored records dir preflight prints, NOT a bare runs/ — from a linked worktree that is a private, gitignored copy the main checkout cannot see), then: track-note.sh governance <path>. If the surface refuses that write because it confines file writes to the worktree, write to track-note.sh govpath --staged and pin that path — the pin promotes it into the anchored dir' ;;
     G2) printf 'Read the missing .github/instructions/* file(s) and add their binding constraints to the bundle, then re-pin it.' ;;
     G3) printf 'Governance must be discovered and pinned BEFORE any subagent is dispatched. Re-run the affected dispatches with the bundle content embedded in each brief.' ;;
     G4) printf 'Read security-and-owasp.instructions.md, add its relevant constraints to the bundle, and re-review the trust-boundary diff against them.' ;;
