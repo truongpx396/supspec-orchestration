@@ -407,10 +407,23 @@ case "$tool" in
               "${TRACK_MAIN_ROOT%/}/${_runs2%/}"/*) p_is_anchored_runs=1 ;; esac ;;
       esac
       unset _runs2
+      # STAGING is the one legal way to author the bundle on a surface whose file-writing
+      # tools are confined to the worktree (an agent isolating via a native worktree tool).
+      # Such a surface cannot write the anchored path AT ALL, so the deny below — correct
+      # in itself — left the intersection empty: an observed run spent its budget finding
+      # four refusals in a row and never wrote the bundle. The staged name is deliberately
+      # distinct from the bundle's, so a staged file can never be mistaken for the pinned
+      # one, and it is legal only inside a records dir; `track-note.sh governance` promotes
+      # it into the anchored dir at pin time and deletes it, which keeps the one-home
+      # invariant a property of the mechanism rather than of the model's care.
       case "${_abs##*/}" in
+        *.governance.staged.md)
+          if [ "$p_is_runs" -eq 0 ]; then
+            deny "'$rel' is a staged governance bundle outside any run's records dir. Staging is only for a surface that cannot write outside this worktree, and it has one place: bash .github/hooks/track-note.sh govpath --staged (it mkdir -p's this worktree's own gitignored runs/ and prints an absolute path). Write to exactly what it prints, then pin it with track-note.sh governance <that path> — the pin promotes it into the anchored records dir and removes the staged copy."
+          fi ;;
         *.governance.md)
           if [ "$p_is_anchored_runs" -eq 0 ]; then
-            deny "'$rel' is a governance bundle outside this run's records dir. runs/ is gitignored, so a copy written from a linked worktree is PRIVATE to that worktree — the main checkout, the run record's pin and the audit all read a different file, and the usual repair is a cp between the two until they diverge. Ask for the one correct path instead: bash .github/hooks/track-note.sh govpath (it mkdir -p's the dir and prints an absolute path), write to exactly what it prints, then pin it with track-note.sh governance <that path>."
+            deny "'$rel' is a governance bundle outside this run's records dir. runs/ is gitignored, so a copy written from a linked worktree is PRIVATE to that worktree — the main checkout, the run record's pin and the audit all read a different file, and the usual repair is a cp between the two until they diverge. Ask for the one correct path instead: bash .github/hooks/track-note.sh govpath (it mkdir -p's the dir and prints an absolute path), write to exactly what it prints, then pin it with track-note.sh governance <that path>. If your surface REFUSES that write because it confines file writes to this worktree, do not hand-cp and do not stage in the deliverable tree: write to track-note.sh govpath --staged and pin that path instead."
           fi ;;
       esac
       unset _runs _abs _base

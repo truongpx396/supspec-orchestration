@@ -220,9 +220,35 @@ run, and both come from re-deriving the path instead of asking for it:
   gitignored copy** — invisible to the main checkout where the record lives. The audit then reports
   the bundle MISSING, and the usual repair is to keep both and `cp` between them until they diverge.
 
+### When the surface refuses the anchored write — stage it, don't improvise
+
+Some agent surfaces isolate by **native worktree tool** and confine their file-writing tools to that
+worktree. The anchored path lives in the **main** checkout, so on those surfaces the Write above is
+refused before any hook sees it — and the guard denies a bundle written anywhere *else*. Read plainly:
+the intersection is empty, there is no path you can author, and improvising is what a real run did —
+scratch dir denied, dotfile at the worktree root denied, a chained Bash lookup + `cp` denied, four
+refusals and no bundle. **Do not hand-`cp`, do not stage in the deliverable tree, do not widen scope.**
+Ask for the staged path and pin it — one extra command, and the promotion is mechanical:
+
+```bash
+bash .github/hooks/track-note.sh govpath --staged   # → <this worktree>/runs/<RUN_ID>.governance.staged.md
+```
+```bash
+# Write the distilled constraints to EXACTLY that path (Write tool, not a heredoc).
+```
+```bash
+bash .github/hooks/track-note.sh governance "<the staged path>"   # promotes, then pins the ANCHORED copy
+```
+
+`governance` copies the staged file into the anchored records dir, **deletes the staged copy**, and
+pins the anchored path — so the bundle still has exactly one home and the fork this whole section
+exists to prevent cannot happen. It prints both paths; **the anchored one is what you re-read after a
+compaction** (`cat` it through Bash if your Read tool is worktree-confined too). Only *this* run's own
+bundle basenames are ever relocated — pinning any other file still warns and leaves it where it is.
+
 `runs/` being gitignored is also what keeps the bundle out of the diff and out of the evidence
 fingerprint. (`track-note.sh governance` resolves and records an absolute path, and warns — naming
-`govpath` — when the file sits outside the run's records dir.)
+both `govpath` forms — when the file sits outside the run's records dir.)
 `track-note.sh governance` records the path **and a sha**, so a later reader can tell whether the
 bundle changed after the briefs were built; `track-reconcile.sh` reports
 `position.governance_bundle_present:false` and tells you to re-run discovery if the file has since

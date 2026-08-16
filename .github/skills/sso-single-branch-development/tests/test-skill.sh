@@ -682,6 +682,31 @@ printf '%s' "$result" | grep -q 'govpath' \
 assert_allow "guard: a non-bundle file in a worktree runs/ is still bookkeeping -> allow" \
   "$GUARD" "$(jq -nc --arg p "$RUNS_ABS/pr-body.md" '{tool_name:"Write",tool_input:{file_path:$p}}')" \
   "TRACK_ALLOWED_PREFIXES=src/" "RUNS_DIR=$RUNS_ABS"
+
+# ...but the denial above must not be the ONLY answer. A surface isolating via a native
+# worktree tool confines its file-writing tools to the worktree, so it cannot author the
+# anchored path at all — and with every non-anchored bundle denied, the intersection was
+# empty: one observed run hit four refusals in a row (anchored path, scratch dir, dotfile
+# at the worktree root, a chained Bash lookup+cp) and never wrote its bundle. The staged
+# name is the legal path through, and it is legal ONLY inside a records dir.
+assert_allow "guard: a STAGED bundle in a worktree runs/ -> allow (the sandboxed-surface route)" \
+  "$GUARD" "$(jq -nc --arg p "$RUNS_ABS/x.governance.staged.md" '{tool_name:"Write",tool_input:{file_path:$p}}')" \
+  "TRACK_ALLOWED_PREFIXES=src/" "RUNS_DIR=$RUNS_ABS"
+assert_deny "guard: a staged bundle in the DELIVERABLE tree -> deny" \
+  "$GUARD" "$(jq -nc --arg p "$GIT_TOP/src/x.governance.staged.md" '{tool_name:"Write",tool_input:{file_path:$p}}')" \
+  "TRACK_ALLOWED_PREFIXES=src/" "RUNS_DIR=$RUNS_ABS"
+result=$(printf '%s' "$(jq -nc --arg p "$GIT_TOP/src/x.governance.staged.md" '{tool_name:"Write",tool_input:{file_path:$p}}')" \
+  | env "TRACK_ALLOWED_PREFIXES=src/" "RUNS_DIR=$RUNS_ABS" bash "$GUARD" 2>&1) || true
+printf '%s' "$result" | grep -q 'govpath --staged' \
+  && pass "guard: the staged-bundle denial names govpath --staged as the in-bounds move" \
+  || fail "guard: staged-bundle denial names no fix"
+# The anchored denial has to hand the sandboxed surface its way out, or the model rediscovers
+# the deadlock one refusal at a time — which is exactly what it cost last time.
+result=$(printf '%s' "$(jq -nc --arg p "$WT_RUNS_ABS/x.governance.md" '{tool_name:"Write",tool_input:{file_path:$p}}')" \
+  | env "TRACK_ALLOWED_PREFIXES=src/" "RUNS_DIR=$RUNS_ABS" bash "$GUARD" 2>&1) || true
+printf '%s' "$result" | grep -q 'govpath --staged' \
+  && pass "guard: the bundle-fork denial also names the staged route for a confined surface" \
+  || fail "guard: bundle-fork denial leaves a worktree-confined surface with no legal path"
 rm -rf "$WT_RUNS_ABS"
 
 assert_deny "guard: runs/ allowance does not open the rest of the tree -> deny" \
@@ -1529,14 +1554,71 @@ esac
 printf 'x\n' > "$GOVP_OUT" 2>/dev/null \
   && pass "note: the path govpath prints is writable without a manual mkdir" \
   || fail "note: the path govpath prints is writable without a manual mkdir"
+
+# --- govpath --staged + promotion: the worktree-confined surface -------------------
+# A surface that isolates via a native worktree tool cannot write the anchored path at all,
+# and the guard denies every other bundle path — an empty intersection, which cost one run
+# its budget. --staged prints a path INSIDE this worktree; the pin then promotes it across.
+# The cross-boundary write moves back into a script, where the run record and the evidence
+# captures already do it.
+GOVS_OUT="$( cd "$GOVP_T/wt" && RUN_ID=govp RUNS_DIR=runs bash "$NOTE" govpath --staged 2>/dev/null )"
+case "$GOVS_OUT" in
+  */wt/runs/govp.governance.staged.md) pass "note: govpath --staged stays inside the CURRENT worktree" ;;
+  *) fail "note: govpath --staged stays inside the current worktree (got: $GOVS_OUT)" ;;
+esac
+printf '# staged bundle\n' > "$GOVS_OUT" 2>/dev/null \
+  && pass "note: the staged path is writable without a manual mkdir" \
+  || fail "note: the staged path is writable without a manual mkdir"
+( cd "$GOVP_T/wt" && RUN_ID=govp RUNS_DIR=runs bash "$NOTE" governance "$GOVS_OUT" ) >/dev/null 2>&1
+GOVS_PIN="$(jq -r '.governance_bundle.path // ""' "$GOVP_MAIN/runs/govp.json" 2>/dev/null || echo '')"
+case "$GOVS_PIN" in
+  */main/runs/govp.governance.md) pass "note: pinning a staged bundle records the ANCHORED path, not the staged one" ;;
+  *) fail "note: pinning a staged bundle records the anchored path (got: $GOVS_PIN)" ;;
+esac
+[ -f "$GOVP_MAIN/runs/govp.governance.md" ] \
+  && grep -q 'staged bundle' "$GOVP_MAIN/runs/govp.governance.md" 2>/dev/null \
+  && pass "note: promotion moves the CONTENT, not just the path" \
+  || fail "note: promotion moves the content, not just the path"
+# One home means one file. Leaving the staged copy behind recreates the fork this prevents.
+[ ! -e "$GOVS_OUT" ] \
+  && pass "note: promotion removes the staged copy — the bundle keeps exactly one home" \
+  || fail "note: promotion left a staged copy behind (the fork this exists to prevent)"
+# Re-pinning the already-anchored path (the sanctioned mid-core re-pin) must stay a quiet
+# no-op: no relocation warning, and above all no attempt to copy the bundle onto itself.
+# Both were live wherever the checkout is reached through a symlink — /tmp and /var/folders
+# on macOS — because the caller's path is logical while every path it is compared against
+# comes back from git as physical. This fixture IS that case (mktemp -d under /var).
+GOVS_REPIN="$( cd "$GOVP_T/wt" && RUN_ID=govp RUNS_DIR=runs bash "$NOTE" governance "$GOVP_MAIN/runs/govp.governance.md" 2>&1 )"
+[ -z "$GOVS_REPIN" ] && [ -s "$GOVP_MAIN/runs/govp.governance.md" ] \
+  && pass "note: re-pinning the anchored path is silent and never copies the bundle onto itself" \
+  || fail "note: re-pinning the anchored path warned or self-copied ($GOVS_REPIN)"
+
+# Narrow by design: only THIS run's own bundle basenames are relocated. Anything else the
+# caller points at is pinned where it lies, with the existing warning.
+printf '# not the bundle\n' > "$GOVP_T/wt/notes.md"
+( cd "$GOVP_T/wt" && RUN_ID=govp RUNS_DIR=runs bash "$NOTE" governance "$GOVP_T/wt/notes.md" ) >/dev/null 2>&1
+GOVS_PIN2="$(jq -r '.governance_bundle.path // ""' "$GOVP_MAIN/runs/govp.json" 2>/dev/null || echo '')"
+case "$GOVS_PIN2" in
+  */wt/notes.md)
+    [ -f "$GOVP_T/wt/notes.md" ] \
+      && pass "note: promotion is narrow — an unrelated pinned file is not relocated" \
+      || fail "note: promotion is narrow — an unrelated pinned file was moved" ;;
+  *) fail "note: promotion is narrow — an unrelated pinned file was relocated (pin: $GOVS_PIN2)" ;;
+esac
 ( cd "$GOVP_MAIN" && git worktree remove --force "$GOVP_T/wt" ) >/dev/null 2>&1 || true
 rm -rf "$GOVP_T"
 
 # --- governance: pin the persisted bundle (must exist on disk) -----------------
 GOV_FILE="$NOTE_RUNS/gov.md"; printf 'binding constraints\n' > "$GOV_FILE"
 RUN_ID="$NOTE_RID" RUNS_DIR="$NOTE_RUNS" bash "$NOTE" governance "$GOV_FILE" >/dev/null 2>&1 || true
-if jq -e --arg p "$GOV_FILE" '.governance_bundle.path == $p
-          and (.governance_bundle.sha | length == 40)
+# The pin is asserted as a FILE, not as a string: it is recorded physically (`pwd -P`), so a
+# caller's logical path — anything under /tmp or /var/folders on macOS — is recorded in its
+# resolved form. That is the point. Every reader that compares it (the promotion check here,
+# the guard's records-dir test, the audit's existence test) gets its own side from git, which
+# is always physical, and a logical pin compares unequal to its own directory.
+GOV_PIN="$(jq -r '.governance_bundle.path // ""' "$NOTE_RUNS/$NOTE_RID.json" 2>/dev/null || echo '')"
+if [ -n "$GOV_PIN" ] && [ "$GOV_PIN" -ef "$GOV_FILE" ] \
+   && jq -e '(.governance_bundle.sha | length == 40)
           and .governance_bundle.self_reported == true' \
      "$NOTE_RUNS/$NOTE_RID.json" >/dev/null 2>&1; then
   pass "note: governance pins bundle path + sha"
@@ -3638,6 +3720,16 @@ if [ -f "$GOVERNANCE_MD" ] \
   pass "struct: governance bundle is persisted to runs/<RUN_ID>.governance.md + pinned"
 else
   fail "struct: governance bundle is persisted to runs/<RUN_ID>.governance.md + pinned"
+fi
+# 10.19b — the sandboxed-worktree route is documented where the model reads it. The gate is
+# mandatory, so a surface that cannot author the anchored path has to find the staged one in
+# the instructions rather than by exhausting refusals: SKILL.md is what it holds at the gate,
+# governance.md is the reference the gate sends it to.
+if grep -q 'govpath --staged' "$GOVERNANCE_MD" 2>/dev/null \
+   && grep -q 'govpath --staged' "$SKILL_MD" 2>/dev/null; then
+  pass "struct: the staged-bundle route is documented at the gate and in its reference"
+else
+  fail "struct: the staged-bundle route is documented at the gate and in its reference"
 fi
 _gov_refs=1
 for _md in "$STORY_MD" "$REFACTOR_MD"; do
