@@ -8,6 +8,229 @@ contracts are still stabilizing — matching the convention used by
 Each skill's `SKILL.md` frontmatter carries its own `version` field; this file tracks the
 whole-repo release that ships them together.
 
+## [0.12.3] - 2026-08-21
+
+`sso-single-branch-development` 0.10.2 → 0.10.3. Nine fixes from a detailed second-pass review of
+the same client run's artifacts (`nexus-agent` #43) — this time reading the raw run record and the
+run's own transcript, not just the audit's verdicts. Two are guard bugs that independently produced
+the exact "no compliant path" escalation shape this bundle keeps re-learning to close; the rest
+close observability, batching, and floor gaps the run itself surfaced. Suite: 516 → **555** SBD
+tests, 205 → **206** parallel-tracks (one fixture needed the same opt-in this batch introduced).
+
+### The lifecycle trace is now OFF by default — briefs[] already covers what it was for
+
+`trace[]` cost two rows per subagent (`SubagentStart` + `SubagentStop`), keyed on an opaque
+`agent_id`, and on most surfaces carried no task context at all. A real run's PR body rendered 78
+such rows — `SubagentStart general-purpose (a66acc…)` — for 39 actual dispatches, none of them
+mapping back to what was delegated. `track-brief.sh` already records every dispatch at
+`PreToolUse`, with the outbound brief's own `description` and governance-content counts, one row
+per dispatch, structurally closer to the event than `trace[]` can be.
+
+- `track-trace.sh` is a no-op unless `TRACK_TRACE=1` — `RUN_ID` alone no longer enables it.
+- `track-audit.sh`'s `G3`/`I4`/`G6`/`C2` all read dispatch timing from `briefs[]` first, falling
+  back to `trace[]` only when `briefs[]` is empty — no check weakens with the trace off. The one
+  exception is `M1` (maker/checker id separation): `agent_id` lives nowhere but `trace[]` (a brief
+  is recorded before its subagent exists, so it structurally cannot carry one), so `M1` now WARNs
+  "unverifiable" rather than silently passing when the trace is off.
+- Introduced a second dispatch-time definition, `_dispatch_times_any`, for `G3` specifically:
+  unlike `I4`, `G3` only needs proof SOME dispatch happened at or before a timestamp, and a
+  `SubagentStop` is valid (if late) evidence of that — using the Start-only definition there made
+  `G3` blind on a surface where `SubagentStart` was never wired (a real historical Claude Code gap).
+- `track-report.sh` never renders the raw trace into the PR body, even with `TRACK_TRACE=1` on
+  record — the dispatch list already carries what a reviewer needs.
+
+### Guard denials are now recorded — and one bug in that same guard blocked a genuine first publish
+
+`track-guard.sh`'s `deny()` now appends `{t, tool, reason}` to `denials[]` on every denial, before
+emitting the decision — best-effort, never able to turn a working deny into a crash. Paired with a
+new `track-note.sh workaround <what> <why>` (`workarounds[]`, self-reported) so a reviewer can see
+not just that a rule fired, but why and what the run did about it; `track-report.sh` renders both,
+denials in the hook-observed zone, workarounds under the self-reported heading. `SKILL.md` now
+mandates calling `workaround` for any detour a rule forced, including a sanctioned escape hatch —
+a repeatedly-needed one is itself a signal the default belongs somewhere else.
+
+This surfaced directly from a real denial: `is_first_publish()`'s refspec parsing took the LAST
+token after `git push` as the branch name, without stripping trailing redirections or operators
+first. Every agent on this surface appends `2>&1` (it only sees stdout otherwise), so `git push -u
+origin feat-x 2>&1` tokenised to a refspec of `2>&1` — `refs/heads/2>&1` resolves to nothing, the
+carve-out reported "not a first publish", and a genuinely fresh push was denied. The run's own
+diagnosis was correct; the guard was wrong — and with no compliant path, it escalated to
+self-granting `TRACK_ALLOW_FF_PUSH` and editing the shared `track-env.sh` to force it through.
+Fixed by stripping everything from the first redirection or control operator (`2>&1`, `>file`,
+`&&`, `|`, trailing `&`) before tokenising.
+
+### The append-only migrations guard blocked a run from fixing its own in-session work
+
+`migrations/README.md`'s index went stale — never listing 0004, missing 0005, understating the
+next free number — because two direct attempts to fix it were blocked by the immutable-prefix
+guard, which denied on ANY git history for a path under the prefix. The rule protects work the
+outside world may already depend on (an applied migration in a released branch); a file this run
+itself had already committed edits to minutes earlier is not that. Fixed: a path under an
+immutable prefix is now protected only when it has NO commit in this run's own `base..HEAD` range
+— the first commit that touches it under the run's own history is the moment it graduates from
+"someone else's" to "this run's own", regardless of whether the same path also predates base. No
+base ref resolvable at all still fails closed to the old all-history rule.
+
+### Governance bundle floor raised 5 → 10, and the example bundle rewritten to match
+
+5 substantive bullets per matched instruction file was closer to a theme summary than a
+distillation once a file runs past a few hundred lines — auth/secrets/persistence instructions
+routinely carry more than 10 genuinely independent binding constraints, and the old floor let a
+bundle stop sampling well before covering them. `TRACK_GOV_MIN_BULLETS` default raised to 10
+(still a floor, not a target — a file with genuinely more gets all of them); every stated number in
+`governance.md`/`hooks.md`/`G5`'s own remediation updated to match, and the reference's example
+bundle extended from 6 to 12 bullets per matched-file section so it stops contradicting its own
+stated floor.
+
+### G6's brief-matching signature was brittle to the bundle's OWN lead-in label
+
+The matcher compares the first 40 normalized characters of each bundle bullet against the brief
+text. A bundle bullet like `**Error handling** — wrap errors with %w` normalizes with the label
+still attached, so a brief that faithfully quotes only the constraint's substance (`wrap errors
+with %w…`) never matches — the label alone can consume the whole signature window. A real run
+named exactly this as root cause: a habit of prefixing quoted lines with
+`<filename>.instructions.md:` instead of the bundle's own bullet text scored 11 of 38 otherwise-
+compliant dispatches as thin. `track-brief.sh` now retries with the label stripped (a bold run, an
+`*.instructions.md:` prefix, or a generic `Word:` heading) when the full-line signature fails to
+match — never loosened into a general fuzzy match, so a genuinely filename-only brief still scores
+zero.
+
+### SDD story/refactor cores now batch tasks into clusters instead of one dispatch per task
+
+A real run drove 12 implementation tasks through 38 dispatches — one implement→review round-trip
+per task, each re-establishing context the previous one had already built. `story-mode.md` and
+`refactor-mode.md` now instruct grouping tasks by shared target file/module before dispatching,
+ordering clusters by dependency, and bounding cluster size by what one reviewer can hold — one
+maker + one reviewer dispatch per cluster, not per task, while each cluster stays one increment for
+the convergence/keep-green gate.
+
+### Evidence captured from the wrong directory has a narrow, honest detector
+
+A real run's `evidence[].cmd_full` mixed bare commands, `cd backend-go && …`, and the full absolute
+worktree path — and the fingerprint alone cannot catch a capture whose command ran against a
+DIFFERENT tree, since the fingerprint is computed fresh from the correct worktree independent of
+wherever the captured command actually executed. The harness gives a `PostToolUse` hook no reliable
+signal for a Bash tool's live CWD (`track-evidence.sh`'s own `fp_dir()` already routes around that
+exact gap for fingerprinting rather than trusting `$PWD`), so this can only read what the command's
+own text says: `track-evidence.sh` now records `cwd_hint` from an explicit absolute `cd <path>`
+prefix, present only when the command actually carries one. New audit check `E5` FAILs only on a
+positive contradiction — a hint that resolves outside this run's own worktree — and is silent on an
+absent hint, which is the common, honest case for a bare command and must never be judged.
+
+### skills[] is now mechanically observed, not only self-reported
+
+A real run drove `using-git-worktrees`, `dispatching-parallel-agents`, `subagent-driven-
+development`, and `test-driven-development` in sequence; `skills[]` recorded exactly one entry —
+whichever `track-note.sh skill` call the model happened to remember. New `track-skill.sh`
+(`PreToolUse` on the `Skill` tool, confirmed field shape `tool_input.skill`) appends every
+activation with `self_reported:false`, wired into both `templates/claude-settings.json` and
+`templates/track-hooks.json`. `track-report.sh` now renders `skills[]` as two provenance-separated
+blocks — hook-observed in the mechanical zone, self-reported under the existing "model claim"
+heading — so a hook-observed activation is never laundered under a self-reported label, and vice
+versa.
+
+## [0.12.2] - 2026-08-21
+
+`sso-single-branch-development` 0.10.1 → 0.10.2. Three findings from auditing the same client
+run's own draft PR (`nexus-agent` #43, Phase 2 T010-T026) once it opened: two from the
+governance-deadlock aftermath, one from the discipline audit's own trace-counting logic,
+caught only by reading the audit's output against real data rather than trusting its verdicts.
+Suite: 493 → **516** SBD tests, 205 parallel-tracks (unchanged, all passing).
+
+### Task-scoped artifacts forked into the main checkout the same way the governance bundle did
+
+3 of 12 `subagent-driven-development` review-package diffs for this run ended up in the main
+checkout's `runs/` (`<RUN_ID>.task-6/7/8-review-package.diff`), one of them **0 bytes**, while
+the other 9 tasks' briefs/reports/review-packages correctly stayed in the worktree. Root cause:
+`track-guard.sh`'s `p_is_runs` exemption (added so the governance bundle, PR body, and run
+record could always be written regardless of scope) applies to **either** root — worktree or
+main — with no rule distinguishing "the few files this run single-homes at the anchor" from
+"anything named after this run." Nothing stopped a model already fighting the worktree sandbox
+over the governance bundle from routing other artifacts to the same guard-safe `runs/` it had
+just learned was always writable — including the main checkout's copy. Compounding it: the
+actual artifact came from `subagent-driven-development scripts/review-package`, called with a
+custom output-path argument pointed at `runs/<RUN_ID>.task-N-review-package.diff` instead of
+its own documented default invocation, which resolves to a correct, always-worktree-local
+location (`.superpowers/sdd/<plan>/`) with no anchor concept at all.
+
+- **`track-guard.sh` denies a `Write`/`Edit` to `<RUN_ID>.*` at the main-checkout anchor** unless
+  the basename is one of the artifacts actually single-homed there (`<RUN_ID>.json`,
+  `<RUN_ID>.dispatch`, `<RUN_ID>.governance.md`, `<RUN_ID>.governance.staged.md`) — scoped to
+  when a genuinely different worktree exists for the session, so a solo/branch-in-place run
+  (which has no alternative location) is untouched.
+- **`track-audit.sh` adds `H1`**, a backstop for what the guard's Write/Edit-only check cannot
+  see: the actual incident went through **Bash** (the dependency skill's own script, given a
+  custom path), invisible to any `PreToolUse` path check. `H1` audits the *result* instead of
+  the write — a plain directory listing of the anchored records dir, flagging any `<RUN_ID>.*`
+  file that is not one of the known-anchored basenames. WARN, not FAIL: a stray file may be a
+  harmless duplicate or the only surviving copy, and the audit cannot tell which without reading
+  it — the message says to check before deleting.
+- **`references/story-mode.md` and `refactor-mode.md`** now state plainly, at the point where
+  each core invokes `subagent-driven-development`: never redirect SDD's own artifacts into
+  `runs/`; call `review-package` the way SDD's `SKILL.md` documents, with no output-path
+  argument, so it uses its own correct worktree-local default instead.
+- `track-report.sh`'s per-check strength note and `references/hooks.md`'s hook table both name
+  `H1` and what kind of artifact (a plain `find`) it reads, consistent with every other check's
+  provenance disclosure.
+
+### The fix above told the model to do the right thing without making the right thing reachable
+
+Caught before shipping, not from a second incident. The story/refactor-mode guidance added above
+tells the model to call `subagent-driven-development scripts/review-package` with no output-path
+argument, so it falls back to its own documented, correctly worktree-local default
+(`.superpowers/sdd/<plan>/`). But `track-guard.sh` had no exemption for `.superpowers/` at all —
+only `runs/` was ever carved out — so on a scope narrowed to a deliverable prefix (this run's
+`TRACK_ALLOWED_PREFIXES` was `backend-go/` only) that default location would itself have been
+denied. `nexus-agent` has no `.superpowers/` directory anywhere, confirming it was never
+reachable. Sending the model toward a location the guard would then refuse is the same shape of
+dead end the governance-bundle fix (v0.12.1) exists to close, one level down.
+
+- **`track-guard.sh` exempts `.superpowers/` from scope**, the same way `runs/` already is —
+  gitignored bookkeeping a dependency skill writes as part of being followed (SDD's briefs,
+  reports, review packages; `brainstorming`'s session state, which also uses the convention),
+  never a deliverable. Simpler than the `runs/` exemption: no main-checkout anchor is needed,
+  since every dependency skill resolves it from `git rev-parse --show-toplevel` in whatever
+  worktree it runs in, so a straight prefix match on the already-worktree-relative path is the
+  whole test.
+
+### The discipline audit was counting Start+Stop as two dispatches, and could misattribute a violation
+
+Found by reading `track-audit.sh`'s own output against the client run's actual `trace[]`, not by
+trusting its verdicts. `track-trace.sh` writes one entry per `SubagentStart` *and* one per
+`SubagentStop` — both tagged `kind:"subagent"` — and three checks read that stream as if every
+entry were a fresh dispatch:
+
+- **`I4` could name the wrong event as "the next dispatch".** On the client run, three
+  `PreCompact` events fired while ONE already-briefed subagent was still in flight; `I4` picked
+  that subagent's unrelated `Stop` as if it were a new dispatch needing a fresh governance
+  re-read, four minutes before the real next dispatch actually happened. The reported timestamp
+  named a subagent completing, not one being briefed — and in the general case, a compliant run
+  where a long-running subagent simply finishes shortly after a compaction, with no new dispatch
+  until much later (correctly re-read), would have been **wrongly FAILed** on this alone.
+- **`G6`'s dispatch count was inflated ~2x.** Its "wired but recorded no brief for N dispatch(es)"
+  WARN reads `N` from the same stream: 78 matched entries on the client run for 39 actual
+  dispatches. Never wrong by itself (no test exercised this specific WARN branch, which is how it
+  went unnoticed), but the number a reviewer would use to gauge severity was double the truth.
+- **`M1`'s distinct-subagent-id count could be inflated by a Start/Stop id mismatch.** One
+  subagent's `Stop` carried a *different* `agent_id` than its own `Start` — a surface quirk, not
+  a second subagent — and `unique`-ing across both counted it as one. 40 vs. the true 39 on the
+  client run; in a degenerate single-subagent run this shape could show "2 distinct ids" and
+  falsely clear the exact check that exists to catch one agent both authoring and reviewing.
+
+Fixed by adding `SUBAGENT_START` (chained after the existing `SUBAGENT_SEL`, never replacing it)
+and using it wherever the question is "dispatched", not "active": `I4`'s next-dispatch lookup,
+`G6`'s dispatch count, `M1`'s id count (with a fallback to the broader count when literally no
+`Start` event exists at all — the historical unwired-`SubagentStart` case `hooks.md` already
+documents — so that legacy surface does not lose its only signal). Left `G3` and `C2`'s fallback
+count alone: mathematically inert for the former (a `Stop` can never precede its own `Start`, so
+mixing them in only adds redundant already-satisfied timestamps) and immune by construction for
+the latter (a bare nonzero check).
+
+Re-run against the client PR's own record: `I4` now correctly identifies a *stronger* finding —
+not "no re-read happened" but "a re-read happened and the very next brief still carried nothing
+from it" — and the overall pass/warn/fail count is unchanged (17/2/2, the extra pass from `H1`
+above), confirming the fix corrects the diagnosis without changing the underlying verdict.
+
 ## [0.12.1] - 2026-08-16
 
 `sso-single-branch-development` 0.10.0 → 0.10.1. One finding from a client run (`nexus-agent`
