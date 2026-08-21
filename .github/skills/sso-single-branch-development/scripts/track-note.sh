@@ -57,6 +57,15 @@
 #   track-note.sh status <state> [blocker] [next_step]
 #                                            SET status (+ blocker/next_step). state must be one of
 #                                            success | blocked | no-progress | budget-exceeded
+#   track-note.sh workaround <what> <why>    APPEND {t, what, why, self_reported:true} to
+#                                            workarounds[] — call whenever a rule this skill
+#                                            enforces had to be routed around, even via the
+#                                            sanctioned escape hatch. Pairs with track-guard.sh's
+#                                            hook-observed denials[]: one records WHAT was
+#                                            refused, this records WHY and what the run did
+#                                            about it. track-report.sh renders both in the PR
+#                                            body so a reviewer can see where the skill itself
+#                                            created friction, not just what the model claims.
 #
 # Opt-in via env:
 #   RUN_ID    stable run-id for this worker  (REQUIRED — no-op when unset)
@@ -357,9 +366,30 @@ case "$sub" in
        | .started_ts = (.started_ts // $t) | .last_ts = $t' \
       "$rec" >"$tmp" && mv "$tmp" "$rec"
     ;;
+  workaround)
+    # THE MODEL-AUTHORED HALF of the friction record. track-guard.sh's denials[] (hook-
+    # observed) captures WHAT was refused; it cannot capture the WHY behind the refusal or
+    # what the run did instead — that only the model watching itself hit the wall knows. A
+    # reviewer reading a PR body with neither has no way to tell "the skill's own mechanism
+    # forced a detour" from "everything went cleanly" — which is exactly the gap this whole
+    # bundle keeps re-learning the hard way: a guard fires, the model finds SOME way through
+    # (sanctioned or not), and nothing downstream of the run ever finds out. Call this
+    # whenever a rule this skill enforces (a guard denial, an append-only prefix, the
+    # autonomy boundary at `gh pr create`, anything) had to be routed around, EVEN when the
+    # route taken was the sanctioned one — a repeatedly-needed escape hatch is itself a
+    # signal the default is wrong for this repo.
+    what="${2:-}"
+    why="${3:-}"
+    [ -n "$what" ] && [ -n "$why" ] \
+      || { printf '%s\n' "track-note: 'workaround' needs <what happened> \"<why / root cause>\" (e.g. 'hand-cp'd the governance bundle across the worktree boundary' 'track-guard.sh denied a direct Write to the anchored path; no --staged option existed yet')." >&2; rm -f "$tmp"; exit 2; }
+    jq --arg t "$ts" --arg w "$what" --arg y "$why" \
+      '.workarounds = ((.workarounds // []) + [{t:$t, what:$w, why:$y, self_reported:true}])
+       | .started_ts = (.started_ts // $t) | .last_ts = $t' \
+      "$rec" >"$tmp" && mv "$tmp" "$rec"
+    ;;
   *)
     rm -f "$tmp"
-    printf '%s\n' "track-note: unknown subcommand '${sub:-<none>}' (want: skill | loop | phase | evidence-na | govpath | governance | status)." >&2
+    printf '%s\n' "track-note: unknown subcommand '${sub:-<none>}' (want: skill | loop | phase | evidence-na | govpath | governance | status | workaround)." >&2
     exit 2
     ;;
 esac

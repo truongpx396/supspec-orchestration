@@ -1,6 +1,6 @@
 ---
 name: sso-single-branch-development
-version: 0.10.1
+version: 0.10.3
 description: 'Run a full end-to-end implementation pipeline on one branch/worktree in one of three execution cores — scaffold (non-behavioral bootstrap batch), story (TDD for new/changed behavior), or refactor (behavior-preserving keep-green) — with two-stage spec-compliance + code-quality verification, evidence capture, optional Copilot hooks, and draft-PR handoff. Use when asked to implement one feature, fix one bug, refactor existing code, or do foundation/scaffold setup with strong quality gates but without multi-track parallel orchestration.'
 ---
 
@@ -208,9 +208,9 @@ subagent vs ⚙️ script).
 6. **Evidence gate** (`verification-before-completion`) — paste real command output; "all green"
    without pasted output is not done.
 7. **Confirm the run record** — `runs/<RUN_ID>.json` carries hook-observed fields (`tool_calls`,
-   `trace[]`, `evidence[]`, heartbeat) plus whatever `track-note.sh` asserted (`phase`,
-   `governance_bundle`, `skills[]`, `iterations`, `status`). Never conflate the two: the self-reported
-   ones are provenance-tagged for exactly that reason.
+   `trace[]`, `evidence[]`, `denials[]`, heartbeat) plus whatever `track-note.sh` asserted (`phase`,
+   `governance_bundle`, `skills[]`, `iterations`, `status`, `workarounds[]`) — never conflate the two.
+   **A rule forcing a detour** (a denial, an append-only prefix, `gh pr create`'s boundary, even a sanctioned escape hatch) **gets `track-note.sh workaround "<what>" "<why>"`** — `denials[]` is hook-observed *what*, this is the *why*.
 8. **Draft-PR finish** (only from `success` — see [Terminal States](#terminal-states-name-them-dont-dress-them-up))
    — open a **draft** PR and stop. This **replaces** SDD's call to
    `finishing-a-development-branch`; the worker never reaches its merge menu. Integration/merge is
