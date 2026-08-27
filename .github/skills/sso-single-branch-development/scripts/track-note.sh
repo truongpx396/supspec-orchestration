@@ -29,7 +29,8 @@
 # Wire it from the SKILL prompt (not track-hooks.json): call `note skill …` at the top
 # of each core step, `note loop …` once per RED→GREEN→review cycle, `note phase …` at
 # EVERY pipeline-step boundary (mandatory — it is the resume anchor), `note governance …`
-# once the bundle is persisted, and `note status …` on any non-success terminal state.
+# once the bundle is persisted, `note status …` on any non-success terminal state, and
+# `note dispatch-result …` as each subagent in a parallel fan-out returns or dies.
 #
 # Usage (no-op unless RUN_ID is set):
 #   track-note.sh skill <name> [step]        append {t, skill, step, self_reported:true} to skills[]
@@ -66,6 +67,18 @@
 #                                            about it. track-report.sh renders both in the PR
 #                                            body so a reviewer can see where the skill itself
 #                                            created friction, not just what the model claims.
+#   track-note.sh dispatch-result <desc> <status> <output_file> [summary]
+#                                            APPEND {t, desc, status, output_file, session_id?,
+#                                            summary?, self_reported:true} to dispatch_results[]
+#                                            — call as EACH dispatch in a dispatching-parallel-
+#                                            agents fan-out (RED batch / GENERATE / PIN-GREEN)
+#                                            returns or dies. track-brief.sh records the
+#                                            OUTBOUND brief; this is the counterpart for the
+#                                            INBOUND result — a background-task notification's
+#                                            output-file path is visible only to the model, on
+#                                            its own turn, so no hook can capture it. See
+#                                            references/resume-parallel-dispatch.md for why this
+#                                            is the recovery anchor when a wave dies mid-flight.
 #
 # Opt-in via env:
 #   RUN_ID    stable run-id for this worker  (REQUIRED — no-op when unset)
@@ -387,9 +400,40 @@ case "$sub" in
        | .started_ts = (.started_ts // $t) | .last_ts = $t' \
       "$rec" >"$tmp" && mv "$tmp" "$rec"
     ;;
+  dispatch-result)
+    # See the header block above for why this exists. Record it the moment a dispatched
+    # subagent's own notification/result arrives — success or failure — not batched at the
+    # end, so an interruption partway through a wave still leaves every earlier result on
+    # record.
+    desc="${2:-}"
+    status="${3:-}"
+    output_file="${4:-}"
+    summary="${5:-}"
+    [ -n "$desc" ] && [ -n "$status" ] && [ -n "$output_file" ] \
+      || { printf '%s\n' "track-note: 'dispatch-result' needs <desc> <status> <output_file> [summary] (e.g. 'RED tests: schema & domain types' failed /private/tmp/.../tasks/a065990c853.output)." >&2; rm -f "$tmp"; exit 2; }
+    # Best-effort session id, derived structurally from the harness's own scratch layout
+    # (.../<session-uuid>/tasks/<task-id>.output) — never required, never blocks the record
+    # when the path doesn't have this shape (a different surface, a hand-typed path).
+    session_id=""
+    case "$output_file" in
+      */tasks/*)
+        _sid_dir="${output_file%/tasks/*}"
+        session_id="${_sid_dir##*/}"
+        unset _sid_dir
+        ;;
+    esac
+    jq --arg t "$ts" --arg d "$desc" --arg s "$status" --arg o "$output_file" \
+       --arg sum "$summary" --arg sid "$session_id" \
+      '.dispatch_results = ((.dispatch_results // []) + [
+         ({t:$t, desc:$d, status:$s, output_file:$o, self_reported:true}
+           + (if $sum != "" then {summary:$sum} else {} end)
+           + (if $sid != "" then {session_id:$sid} else {} end))
+       ]) | .started_ts = (.started_ts // $t) | .last_ts = $t' \
+      "$rec" >"$tmp" && mv "$tmp" "$rec"
+    ;;
   *)
     rm -f "$tmp"
-    printf '%s\n' "track-note: unknown subcommand '${sub:-<none>}' (want: skill | loop | phase | evidence-na | govpath | governance | status | workaround)." >&2
+    printf '%s\n' "track-note: unknown subcommand '${sub:-<none>}' (want: skill | loop | phase | evidence-na | govpath | governance | status | workaround | dispatch-result)." >&2
     exit 2
     ;;
 esac

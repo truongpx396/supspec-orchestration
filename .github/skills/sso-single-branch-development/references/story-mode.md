@@ -110,6 +110,14 @@ accepted only when the **whole group fails for the right reason** — a compile 
 assertion, or a genuine unmet expectation, **not** a typo or a missing import. "Red for the wrong
 reason" is a silent hole; assert real red before proceeding.
 
+**Dispatch in waves capped at `TRACK_MAX_PARALLEL_AGENTS` (default 5), not all clusters at once.**
+Let a wave fully resolve — call `track-note.sh dispatch-result` as each result lands — before
+starting the next. This bounds how much a shared failure (an account-level session limit killing
+every in-flight dispatch together) can take out at once, and is what makes recovery tractable
+instead of forensic. See [`resume-parallel-dispatch.md`](resume-parallel-dispatch.md) for the wave
+cap's rationale and the exact procedure for resuming a batch that was interrupted mid-flight —
+including recovering partial work instead of redispatching every cluster from scratch.
+
 **Each RED-author subagent's brief carries the governance bundle** (see
 [`governance.md`](governance.md) — re-read it from `runs/<RUN_ID>.governance.md`, never from memory): the relevant **constitution** principles, the `.github/instructions/*` matching
 the files under test, and — because story-scope tests encode security behavior (access-scope, injection
