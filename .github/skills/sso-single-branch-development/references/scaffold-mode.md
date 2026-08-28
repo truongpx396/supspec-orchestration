@@ -325,6 +325,12 @@ file**. `[P]` tells you tasks *can* run concurrently; the clustering tells you *
 agents* without two of them racing the same path. If you cannot cleanly partition the files, the tasks
 are not disjoint and must not fan out.
 
+**Dispatch in waves capped at `TRACK_MAX_PARALLEL_AGENTS` (default 5), not every cluster at once**,
+recording each result via `track-note.sh dispatch-result` as it lands. See
+[`resume-parallel-dispatch.md`](resume-parallel-dispatch.md) if a wave is interrupted mid-flight
+(account-level outage, session limit) — it covers recovering a dead generator's partial output
+before redispatching, rather than restarting the whole batch from scratch.
+
 ### APPLY — the controller is the only writer
 
 The controller applies every returned body in one pass. Single writer ⇒ no `.git/index.lock` race,

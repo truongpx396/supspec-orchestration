@@ -119,7 +119,10 @@ Two sub-steps, in order:
    genuinely discovered a bug, that is story-mode work — land the fix separately.)
 
 Generation fans out exactly like scaffold/story RED: N read-only subagents each return one test file
-body as text; the controller (single writer) applies them. **Each characterization-author subagent's
+body as text; the controller (single writer) applies them. Dispatch in waves capped at
+`TRACK_MAX_PARALLEL_AGENTS` (default 5), recording each result via `track-note.sh dispatch-result`
+as it lands — see [`resume-parallel-dispatch.md`](resume-parallel-dispatch.md) for recovering a wave
+interrupted mid-flight instead of redispatching it whole. **Each characterization-author subagent's
 brief carries the governance bundle** (see [`governance.md`](governance.md); re-read it from
 `runs/<RUN_ID>.governance.md`, never from memory) — the
 relevant constitution principles, the matching `.github/instructions/*`, and

@@ -115,6 +115,15 @@ export TRACK_SENTINEL="${TRACK_SENTINEL:-1}"                         # [REPO-POL
 # where a context compaction erases it. Distinct from the orchestrator's no-progress
 # detector, which counts STALLED PASSES; this counts FIX ATTEMPTS.
 export TRACK_SELF_HEAL_ATTEMPTS="${TRACK_SELF_HEAL_ATTEMPTS:-2}"
+# [REPO-POLICY] Ceiling on subagents dispatched AT ONCE from one dispatching-parallel-agents
+# fan-out (RED batch / GENERATE / PIN-GREEN). Dispatch in waves of this size and let a wave
+# fully resolve (every result recorded via `track-note.sh dispatch-result`) before starting
+# the next — a wave that dies together (e.g. an account-level session limit) leaves at most
+# this many unresolved dispatches to recover, not the whole batch at once. PROMPT-ENFORCED —
+# no hook can reliably count in-flight background dispatches across every surface, so this is
+# the durable, auditable home for the number, same reasoning as TRACK_SELF_HEAL_ATTEMPTS. See
+# references/resume-parallel-dispatch.md for the recovery procedure when a wave IS interrupted.
+export TRACK_MAX_PARALLEL_AGENTS="${TRACK_MAX_PARALLEL_AGENTS:-5}"
 
 # --- notify (optional) -------------------------------------------------------
 export TRACK_NOTIFY_WEBHOOK="${TRACK_NOTIFY_WEBHOOK:-}"              # [REPO-POLICY] Slack/Discord/generic webhook for terminal state; empty = no notify
