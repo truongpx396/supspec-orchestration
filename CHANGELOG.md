@@ -8,6 +8,32 @@ contracts are still stabilizing — matching the convention used by
 Each skill's `SKILL.md` frontmatter carries its own `version` field; this file tracks the
 whole-repo release that ships them together.
 
+## [0.13.0] - 2026-08-28
+
+`sso-single-branch-development` 0.10.3 → 0.11.0. A `dispatching-parallel-agents` fan-out (RED
+batch / GENERATE / PIN-GREEN) has generators that return text with the controller as sole
+writer — a generator that dies before returning (an account-level session limit, a transient
+outage) leaves nothing on disk, and nothing capped how many could die together. A real run fired
+18 dispatches at once and lost every one of them to a single outage, with the only recovery path
+being forensic extraction from harness-internal transcript files after the fact.
+
+### Parallel-dispatch waves are now capped and recoverable
+
+- New `TRACK_MAX_PARALLEL_AGENTS` (default 5, `track-env.base.sh`) bounds how many subagents a
+  fan-out dispatches at once — wave-dispatch, let a wave fully resolve, then dispatch the next —
+  so a shared failure takes out at most one wave instead of the whole batch.
+- New `track-note.sh dispatch-result <desc> <status> <output_file> [summary]` records each
+  dispatch's outcome into the run record as it lands (self-reported — a background-task
+  notification's output path is visible only to the model on its own turn, never to a hook),
+  auto-deriving `session_id` from the harness's own scratch-path shape.
+- New [`references/resume-parallel-dispatch.md`](.github/skills/sso-single-branch-development/references/resume-parallel-dispatch.md)
+  documents the resume procedure: after `track-reconcile.sh`, check `dispatch_results[]` for
+  unresolved dispatches, verify the `output_file` still exists (it's OS-managed scratch space
+  with no persistence guarantee), extract recoverable text safely — never read the transcript
+  raw — and feed partial work into the redispatch brief instead of starting the cluster over.
+- `story-mode.md` / `scaffold-mode.md` / `refactor-mode.md` each point their fan-out step at the
+  wave cap and the recovery doc.
+
 ## [0.12.3] - 2026-08-21
 
 `sso-single-branch-development` 0.10.2 → 0.10.3. Nine fixes from a detailed second-pass review of
